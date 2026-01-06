@@ -138,9 +138,77 @@ async function supaGetUserRole(supabase, userId, email) {
   }
 }
 
-// PUBLIC_INTERFACE
+/**
+ * PUBLIC_INTERFACE
+ */
 export const dataService = {
   /** Admin facade: users, approvals, requests, fees (Supabase optional). */
+
+  // PUBLIC_INTERFACE
+  async createRequest({ user, vehicle, issueDescription, contact }) {
+    /**
+     * Admin creates a new request for a customer/user.
+     * Always set status='open', never send 'id', only valid/null UUIDs for optional fields.
+     */
+    ensureSeedData();
+    const supabase = getSupabase();
+    const nowIso = new Date().toISOString();
+    const request = {
+      id: uid("req"),
+      createdAt: nowIso,
+      userId: user.id,
+      userEmail: user.email,
+      vehicle,
+      issueDescription,
+      contact,
+      status: "open",
+      assignedMechanicId: null,
+      assignedMechanicEmail: null,
+      notes: [],
+    };
+
+    if (supabase) {
+      const insertPayload = {
+        created_at: nowIso,
+        user_id: user.id,
+        user_email: user.email,
+        vehicle,
+        issue_description: issueDescription,
+        contact,
+        status: "open",
+        assigned_mechanic_id: null,
+        assigned_mechanic_email: null,
+        notes: [],
+      };
+      const { data, error } = await supabase
+        .from("requests")
+        .insert(insertPayload)
+        .select()
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+      if (!data) throw new Error("Failed to insert request.");
+
+      return {
+        id: data.id,
+        createdAt: data.created_at,
+        userId: data.user_id,
+        userEmail: data.user_email,
+        vehicle: data.vehicle,
+        issueDescription: data.issue_description,
+        contact: data.contact,
+        status: data.status,
+        assignedMechanicId: data.assigned_mechanic_id,
+        assignedMechanicEmail: data.assigned_mechanic_email,
+        notes: data.notes || [],
+      };
+    }
+
+    // In mock mode, assign a custom string ID.
+    const all = getLocalRequests();
+    setLocalRequests([request, ...all]);
+    return request;
+  },
 
   // PUBLIC_INTERFACE
   async login(email, password) {
