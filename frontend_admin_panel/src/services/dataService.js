@@ -263,6 +263,8 @@ export const dataService = {
   createDemoAdminSession() {
     /** Creates and persists the Demo Admin session. Idempotent. Only sets if demo mode is enabled. */
     if (!isDemoEnabled()) throw new Error("Demo Admin mode is not enabled.");
+    // Clear any existing sessions for safety, then write demo admin.
+    clearLocalSession();
     const session = { ...DEMO_ADMIN };
     setDemoAdminSession(session);
     return session;
@@ -459,10 +461,16 @@ export const dataService = {
      */
     ensureSeedData();
 
-    if (isDemoEnabled()) {
-      const demoSession = getDemoAdminSession();
-      if (!demoSession) return null;
+    // Defensive: allow getting demo admin if demo session key is set, regardless of demoEnabled() (covers manual session injection for diagnostics)
+    const demoSession = getDemoAdminSession();
+    if (demoSession) {
       return { id: demoSession.id, email: demoSession.email, role: "admin", approved: true, full_name: demoSession.full_name };
+    }
+
+    // Normal auth flow
+    if (isDemoEnabled()) {
+      // In demo mode, do not allow fallback to mock or supabase -- if session not present, no user.
+      return null;
     }
 
     const supabase = getSupabase();

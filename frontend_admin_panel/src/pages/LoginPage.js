@@ -190,6 +190,8 @@ export function LoginPage({ onAuthed }) {
                   return;
                 }
               }}
+              aria-disabled={demoEnabled ? "true" : undefined}
+              tabIndex={demoEnabled ? -1 : undefined}
             >
               {busy ? "Signing in..." : "Sign in"}
             </Button>
@@ -198,8 +200,19 @@ export function LoginPage({ onAuthed }) {
                 type="button"
                 variant="secondary"
                 disabled={busy}
-                onClick={demoLogin}
+                onClick={async () => {
+                  setError("");
+                  setBusy(true);
+                  try {
+                    await demoLogin();
+                  } catch (err) {
+                    setError(err && err.message ? err.message : "Demo login failed.");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
                 style={{ border: "1px solid rgba(245,158,11,0.35)" }}
+                data-testid="demo-admin-login-btn"
               >
                 Login as Demo Admin ({DEMO.email} / {DEMO.password})
               </Button>
