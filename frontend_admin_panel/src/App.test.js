@@ -3,6 +3,6 @@ import App from "./App";
 
 test("renders admin brand", async () => {
   render(<App />);
-  // App bootstraps auth state asynchronously, so the navbar renders after a short delay.
-  expect(await screen.findByText(/RoadRescue/i)).toBeInTheDocument();
+  // The word "RoadRescue" also appears in the footer, so target the navbar brand link specifically.
+  expect(await screen.findByRole("link", { name: /RoadRescue Admin/i })).toBeInTheDocument();
 });

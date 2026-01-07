@@ -111,12 +111,18 @@ function isSupabaseConfigured() {
 function isDemoEnabled() {
   /**
    * Returns true when demo admin mode should be enabled.
-   * Demo is enabled when:
-   * - REACT_APP_DEMO_ADMIN_ENABLED === 'true', OR
-   * - Supabase is not configured (empty URL/KEY)
+   *
+   * IMPORTANT:
+   * - Demo mode is an explicit opt-in via env flag only.
+   * - When Supabase is NOT configured, the app runs in "mock mode" (seeded localStorage),
+   *   and should continue to accept the documented mock admin credentials:
+   *   `admin@example.com` / `password123`.
+   *
+   * This avoids accidentally forcing demo-only credentials in environments where Supabase
+   * isn't configured (local development / demos), which previously caused login failures.
    */
   const flag = process.env.REACT_APP_DEMO_ADMIN_ENABLED;
-  return flag === "true" || !isSupabaseConfigured();
+  return flag === "true";
 }
 
 function getSupabase() {
