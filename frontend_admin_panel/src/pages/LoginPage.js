@@ -79,9 +79,11 @@ export function LoginPage({ onAuthed }) {
   const submit = async (e) => {
     e.preventDefault();
     setError("");
-    // When demo is enabled, block form credential login to force the demo flow
+    // If demo mode is enabled, always block regular credential login and show clear instructions.
     if (demoEnabled) {
-      setError("Demo mode: To log in, click 'Login as Demo Admin' below. Standard credentials are not accepted in demo mode.");
+      setError(
+        "Demo mode is enabled. Please use the 'Login as Demo Admin' button below. Email/password Sign In is disabled in demo mode."
+      );
       return;
     }
     if (!email.trim()) return setError("Email is required.");
@@ -90,6 +92,7 @@ export function LoginPage({ onAuthed }) {
     try {
       await completeLogin(email, password);
     } catch (err) {
+      // Only show literal credential error outside demo mode
       setError(err.message || "Login failed.");
     } finally {
       setBusy(false);
@@ -148,6 +151,7 @@ export function LoginPage({ onAuthed }) {
             onChange={(e) => setEmail(e.target.value)}
             required
             disabled={demoEnabled}
+            hint={demoEnabled ? "Disabled in demo mode." : undefined}
           />
           <Input
             label="Password"
@@ -157,6 +161,7 @@ export function LoginPage({ onAuthed }) {
             onChange={(e) => setPassword(e.target.value)}
             required
             disabled={demoEnabled}
+            hint={demoEnabled ? "Disabled in demo mode." : undefined}
           />
 
           {error ? <div className="alert alert-error">{error}</div> : null}
@@ -180,9 +185,11 @@ export function LoginPage({ onAuthed }) {
 
           {demoEnabled ? (
             <div className="hint" style={{ marginTop: 6 }}>
-              Demo credentials: <strong>{DEMO.email}</strong> /{" "}
-              <strong>{DEMO.password}</strong>. Session is stored locally in{" "}
-              <code>localStorage</code> as <code>{dataService.demoSessionKey}</code>.
+              <strong>Demo credentials:</strong> {DEMO.email} / {DEMO.password}.
+              <br />
+              <span>
+                Email and password fields are disabled – use the one-click demo login above, which stores a local admin session as <code>{dataService.demoSessionKey}</code>.
+              </span>
             </div>
           ) : null}
         </form>
