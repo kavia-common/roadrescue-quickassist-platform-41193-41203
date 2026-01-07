@@ -261,12 +261,20 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   createDemoAdminSession() {
-    /** Creates and persists the Demo Admin session. Idempotent. Only sets if demo mode is enabled. */
+    /** 
+     * Creates and persists the Demo Admin session. Idempotent. Only sets if demo mode is enabled.
+     * Also logs a diagnostic message in dev for troubleshooting.
+     */
     if (!isDemoEnabled()) throw new Error("Demo Admin mode is not enabled.");
     // Clear any existing sessions for safety, then write demo admin.
     clearLocalSession();
     const session = { ...DEMO_ADMIN };
     setDemoAdminSession(session);
+    if (process.env.NODE_ENV !== "production") {
+      // minimal diagnostic
+      //eslint-disable-next-line
+      console.info("[DEMO] Demo admin session created and persisted");
+    }
     return session;
   },
 

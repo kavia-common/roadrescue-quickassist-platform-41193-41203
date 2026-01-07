@@ -329,9 +329,20 @@ export function RequireAuth({ user, children }) {
 
   const debugPanel = <AdminDebugPanel state={debugState} />;
 
-  // Mock mode: preserve old redirect behavior.
+  // Mock mode: preserve old redirect behavior, but in DEMO mode explicitly accept demo session (robust demo flag).
   if (!isSupa) {
-    if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    // Accept local demo session even if user is null, in explicit demo mode
+    const hasDemoSession = !!window.localStorage.getItem(dataService.demoSessionKey);
+    const shouldAllow =
+      (user && user.role === "admin") ||
+      (dataService.isDemoEnabled?.() && hasDemoSession);
+
+    if (!shouldAllow) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    
+    if (process.env.NODE_ENV !== "production" && dataService.isDemoEnabled?.()) {
+      //eslint-disable-next-line
+      console.info("[DEMO] RequireAuth: demo mode detected, session", { user, hasDemoSession });
+    }
     return (
       <>
         {children}

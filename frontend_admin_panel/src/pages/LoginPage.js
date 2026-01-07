@@ -60,16 +60,29 @@ export function LoginPage({ onAuthed }) {
         setBusy(false);
         return;
       }
+      // Diagnostic logging for troubleshooting
+      if (process.env.NODE_ENV !== "production") {
+        //eslint-disable-next-line
+        console.info("[DEMO] Attempting demo admin login flow");
+      }
       // For demo mode: call dataService to persist and use Demo Admin session directly
       await dataService.createDemoAdminSession?.();
-      // After session is set, re-fetch demo profile/user for app state
       // Defensive: wait a microtask to ensure localStorage is flushed before reading.
       await Promise.resolve();
       const currentUser = await dataService.getCurrentUser();
+      if (!currentUser || currentUser.role !== "admin") {
+        throw new Error(
+          "Demo session did not persist correctly. Please clear your browser storage and try again. (No admin session found.)"
+        );
+      }
       onAuthed?.(currentUser);
+      if (process.env.NODE_ENV !== "production") {
+        //eslint-disable-next-line
+        console.info("[DEMO] Navigating to /dashboard after demo session set");
+      }
       navigate("/dashboard", { replace: true });
     } catch (err) {
-      setError(err.message || "Demo login failed.");
+      setError(err && err.message ? err.message : "Demo login failed.");
     } finally {
       setBusy(false);
     }
