@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { Button } from "../ui/Button";
 import { dataService } from "../../services/dataService";
@@ -7,6 +7,7 @@ import { dataService } from "../../services/dataService";
 export function Navbar({ user }) {
   /** Admin panel navigation. */
   const navigate = useNavigate();
+  const demoEnabled = useMemo(() => dataService.isDemoEnabled?.() === true, []);
 
   const onLogout = async () => {
     await dataService.logout();
@@ -42,10 +43,26 @@ export function Navbar({ user }) {
           ) : null}
         </nav>
 
-        <div className="nav-right">
+        <div className="nav-right" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {demoEnabled ? (
+            <span
+              className="chip"
+              title="Demo mode is active (local session; Supabase auth is bypassed)"
+              style={{
+                borderColor: "rgba(245,158,11,0.35)",
+                background: "rgba(245,158,11,0.10)",
+                color: "#92400E",
+              }}
+            >
+              Demo Mode
+            </span>
+          ) : null}
+
           {user ? (
             <>
-              <span className="chip">Admin</span>
+              <span className="chip" title={user.email || ""}>
+                {user.full_name ? user.full_name : user.email ? user.email : "Admin"}
+              </span>
               <Button variant="ghost" onClick={onLogout}>
                 Log out
               </Button>

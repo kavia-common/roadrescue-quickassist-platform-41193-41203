@@ -1,45 +1,70 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { dataService } from "../services/dataService";
 
+const DEMO = {
+  email: "demo@roadrescue.local",
+  password: "demo123",
+};
+
 // PUBLIC_INTERFACE
 export function LoginPage({ onAuthed }) {
-  /** Admin login page. */
+  /** Admin login page (Supabase when configured, demo fallback when enabled/unconfigured). */
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@example.com");
-  const [password, setPassword] = useState("password123");
+
+  const demoEnabled = useMemo(() => dataService.isDemoEnabled?.() === true, []);
+
+  const [email, setEmail] = useState(demoEnabled ? DEMO.email : "admin@example.com");
+  const [password, setPassword] = useState(demoEnabled ? DEMO.password : "password123");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const completeLogin = async (emailValue, passwordValue) => {
+    // Step 1: authenticate
+    const u = await dataService.login(emailValue.trim(), passwordValue);
+
+    // Step 2 (canonical): load profile by id=auth.uid() and gate on role='admin'
+    // In demo mode, getCurrentProfile() is provided by dataService (local session) and returns role='admin'.
+    const profile = await dataService.getCurrentProfile();
+
+    if (!profile) {
+      throw new Error(
+        "Signed in, but your profile could not be loaded. Ensure public.profiles has a row with id = auth.uid() and role = 'admin', and that RLS permits select."
+      );
+    }
+
+    if (profile.role !== "admin") {
+      throw new Error(`This portal is for admins only. Your role is '${profile.role || "unknown"}'.`);
+    }
+
+    onAuthed?.({ ...u, role: "admin" });
+    navigate("/dashboard");
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     setError("");
     if (!email.trim()) return setError("Email is required.");
     if (password.length < 6) return setError("Password must be at least 6 characters.");
+
     setBusy(true);
     try {
-      // Step 1: authenticate
-      const u = await dataService.login(email.trim(), password);
+      await completeLogin(email, password);
+    } catch (err) {
+      setError(err.message || "Login failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
-      // Step 2 (canonical): load profile by id=auth.uid() and gate on role='admin'
-      // This avoids relying on any fallback role value and ensures we surface RLS/profile issues clearly.
-      const profile = await dataService.getCurrentProfile();
-
-      if (!profile) {
-        throw new Error(
-          "Signed in, but your profile could not be loaded. Ensure public.profiles has a row with id = auth.uid() and role = 'admin', and that RLS permits select."
-        );
-      }
-
-      if (profile.role !== "admin") {
-        throw new Error(`This portal is for admins only. Your role is '${profile.role || "unknown"}'.`);
-      }
-
-      onAuthed?.({ ...u, role: "admin" });
-      navigate("/dashboard");
+  const demoLogin = async () => {
+    setError("");
+    setBusy(true);
+    try {
+      await completeLogin(DEMO.email, DEMO.password);
     } catch (err) {
       setError(err.message || "Login failed.");
     } finally {
@@ -54,16 +79,65 @@ export function LoginPage({ onAuthed }) {
         <p className="lead">Manage approvals, requests, fees, and basic analytics.</p>
       </div>
 
-      <Card title="Login" subtitle="Demo admin: admin@example.com / password123">
+      <Card
+        title="Login"
+        subtitle={
+          demoEnabled
+            ? "Demo mode is enabled. Use the one-click button below to access the admin panel."
+            : "Demo admin: admin@example.com / password123"
+        }
+        actions={
+          demoEnabled ? (
+            <span
+              className="chip"
+              style={{
+                borderColor: "rgba(245,158,11,0.35)",
+                background: "rgba(245,158,11,0.10)",
+                color: "#92400E",
+              }}
+            >
+              Demo Mode
+            </span>
+          ) : null
+        }
+      >
         <form className="form" onSubmit={submit}>
           <Input label="Email" name="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          <Input label="Password" name="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <Input
+            label="Password"
+            name="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+
           {error ? <div className="alert alert-error">{error}</div> : null}
+
           <div className="row">
             <Button type="submit" disabled={busy}>
               {busy ? "Signing in..." : "Sign in"}
             </Button>
+
+            {demoEnabled ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={demoLogin}
+                style={{ border: "1px solid rgba(245,158,11,0.35)" }}
+              >
+                Login as Demo Admin ({DEMO.email} / {DEMO.password})
+              </Button>
+            ) : null}
           </div>
+
+          {demoEnabled ? (
+            <div className="hint" style={{ marginTop: 6 }}>
+              Demo credentials: <strong>{DEMO.email}</strong> / <strong>{DEMO.password}</strong>. Session is stored locally in{" "}
+              <code>localStorage</code> as <code>admin_session</code>.
+            </div>
+          ) : null}
         </form>
       </Card>
     </div>

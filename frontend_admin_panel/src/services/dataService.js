@@ -6,6 +6,21 @@ const LS_KEYS = {
   requests: "rrqa.requests",
   fees: "rrqa.fees",
   seeded: "rrqa.seeded",
+
+  // Demo admin session (explicitly separate from mock-mode rrqa.session)
+  demoAdminSession: "admin_session",
+};
+
+const DEMO_ADMIN = {
+  id: "demo-admin",
+  email: "demo@roadrescue.local",
+  role: "admin",
+  full_name: "Demo Admin",
+};
+
+const DEMO_CREDENTIALS = {
+  email: "demo@roadrescue.local",
+  password: "demo123",
 };
 
 function uid(prefix = "id") {
@@ -32,7 +47,14 @@ function ensureSeedData() {
 
   const users = [
     { id: uid("u"), email: "user@example.com", password: "password123", role: "user", approved: true },
-    { id: uid("m"), email: "mech@example.com", password: "password123", role: "mechanic", approved: false, profile: { name: "Alex Mechanic", serviceArea: "Downtown" } },
+    {
+      id: uid("m"),
+      email: "mech@example.com",
+      password: "password123",
+      role: "mechanic",
+      approved: false,
+      profile: { name: "Alex Mechanic", serviceArea: "Downtown" },
+    },
     { id: uid("a"), email: "admin@example.com", password: "password123", role: "admin", approved: true },
   ];
 
@@ -85,6 +107,18 @@ function isSupabaseConfigured() {
   return Boolean(url && key);
 }
 
+// PUBLIC_INTERFACE
+function isDemoEnabled() {
+  /**
+   * Returns true when demo admin mode should be enabled.
+   * Demo is enabled when:
+   * - REACT_APP_DEMO_ADMIN_ENABLED === 'true', OR
+   * - Supabase is not configured (empty URL/KEY)
+   */
+  const flag = process.env.REACT_APP_DEMO_ADMIN_ENABLED;
+  return flag === "true" || !isSupabaseConfigured();
+}
+
 function getSupabase() {
   const { url, key } = getSupabaseEnv();
   if (!url || !key) return null;
@@ -124,6 +158,16 @@ function setLocalFees(fees) {
   writeJson(LS_KEYS.fees, fees);
 }
 
+function getDemoAdminSession() {
+  return readJson(LS_KEYS.demoAdminSession, null);
+}
+function setDemoAdminSession(session) {
+  writeJson(LS_KEYS.demoAdminSession, session);
+}
+function clearDemoAdminSession() {
+  window.localStorage.removeItem(LS_KEYS.demoAdminSession);
+}
+
 async function supaGetUserRole(supabase, userId, email) {
   try {
     const { data, error } = await supabase.from("profiles").select("role,approved").eq("id", userId).maybeSingle();
@@ -140,8 +184,7 @@ async function supaGetUserRole(supabase, userId, email) {
       const { error: insertError } = await supabase.from("profiles").insert({ id: userId, email, role: "user", approved: true });
       if (insertError) {
         throw new Error(
-          insertError.message ||
-            "Profile row is missing and could not be created. Check profiles table schema and RLS policies."
+          insertError.message || "Profile row is missing and could not be created. Check profiles table schema and RLS policies."
         );
       }
       return { role: "user", approved: true };
@@ -205,13 +248,30 @@ export const dataService = {
   /** Admin facade: users, approvals, requests, fees (Supabase optional). */
 
   // PUBLIC_INTERFACE
+  isDemoEnabled,
+
+  // PUBLIC_INTERFACE
   async getCurrentSession() {
     /**
-     * Returns the current Supabase auth session and user.
-     * In mock mode (or when not authenticated), returns { session: null, user: null }.
+     * Returns the current auth session and user.
+     *
+     * Behavior:
+     * - In demo mode: reads `admin_session` from localStorage and returns it as authenticated.
+     * - In Supabase mode: returns Supabase auth session and user.
+     * - Otherwise: returns { session: null, user: null }.
      *
      * NOTE: This method is used by the admin auth gate; keep the shape stable.
      */
+    if (isDemoEnabled()) {
+      const demoSession = getDemoAdminSession();
+      if (!demoSession) return { session: null, user: null };
+      // Use a minimal "session-like" object plus a "user-like" object.
+      return {
+        session: { user: demoSession },
+        user: demoSession,
+      };
+    }
+
     const supabase = getSupabase();
     if (!supabase) return { session: null, user: null };
 
@@ -226,9 +286,19 @@ export const dataService = {
   // PUBLIC_INTERFACE
   async getCurrentProfile() {
     /**
-     * Fetches the current user's profile from `public.profiles` where id = auth.uid().
-     * Returns a minimal shape: { id, role, full_name } (null when not authenticated / not configured).
+     * Fetches the current user's profile.
+     *
+     * Behavior:
+     * - In demo mode: returns the demo admin profile (role='admin').
+     * - In Supabase mode: fetches from `public.profiles` where id = auth.uid().
+     * - Otherwise: returns null.
      */
+    if (isDemoEnabled()) {
+      const demoSession = getDemoAdminSession();
+      if (!demoSession) return null;
+      return { id: demoSession.id, role: "admin", full_name: demoSession.full_name || "Demo Admin", email: demoSession.email };
+    }
+
     const supabase = getSupabase();
     if (!supabase) return null;
 
@@ -236,11 +306,7 @@ export const dataService = {
     if (!session || !user) return null;
 
     // IMPORTANT: Fetch by uid explicitly (not by email) to match RLS policies and the requirement.
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,role,full_name")
-      .eq("id", user.id)
-      .maybeSingle();
+    const { data, error } = await supabase.from("profiles").select("id,role,full_name").eq("id", user.id).maybeSingle();
 
     if (error) throw new Error(error.message || "Could not load profile.");
     return data ? { id: data.id, role: data.role || null, full_name: data.full_name || null } : null;
@@ -310,7 +376,26 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async login(email, password) {
+    /**
+     * Login behavior:
+     * - In demo mode: accept only the demo credentials and persist `admin_session`.
+     * - In Supabase mode: use supabase.auth.signInWithPassword.
+     * - In mock mode: use seeded local users + rrqa.session.
+     */
     ensureSeedData();
+
+    if (isDemoEnabled()) {
+      const normalized = (email || "").trim().toLowerCase();
+      if (normalized !== DEMO_CREDENTIALS.email.toLowerCase() || password !== DEMO_CREDENTIALS.password) {
+        throw new Error(
+          `Demo mode is enabled. Use ${DEMO_CREDENTIALS.email} / ${DEMO_CREDENTIALS.password} or click "Login as Demo Admin".`
+        );
+      }
+      const session = { ...DEMO_ADMIN };
+      setDemoAdminSession(session);
+      return { id: session.id, email: session.email, role: "admin", full_name: session.full_name };
+    }
+
     const supabase = getSupabase();
     if (supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -329,6 +414,17 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async logout() {
+    /**
+     * Logout behavior:
+     * - In demo mode: clears demo admin session
+     * - In Supabase mode: signs out supabase
+     * - In mock mode: clears rrqa.session
+     */
+    if (isDemoEnabled()) {
+      clearDemoAdminSession();
+      return;
+    }
+
     const supabase = getSupabase();
     if (supabase) {
       await supabase.auth.signOut();
@@ -339,7 +435,22 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async getCurrentUser() {
+    /**
+     * Returns the currently authenticated user.
+     *
+     * Behavior:
+     * - In demo mode: returns demo admin if `admin_session` exists.
+     * - In Supabase mode: returns Supabase user with roleInfo.
+     * - In mock mode: reads rrqa.session and maps to local user.
+     */
     ensureSeedData();
+
+    if (isDemoEnabled()) {
+      const demoSession = getDemoAdminSession();
+      if (!demoSession) return null;
+      return { id: demoSession.id, email: demoSession.email, role: "admin", approved: true, full_name: demoSession.full_name };
+    }
+
     const supabase = getSupabase();
     if (supabase) {
       const { data } = await supabase.auth.getUser();
