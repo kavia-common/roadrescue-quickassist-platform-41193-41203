@@ -166,6 +166,46 @@ export const dataService = {
   /** Admin facade: users, approvals, requests, fees (Supabase optional). */
 
   // PUBLIC_INTERFACE
+  async getCurrentSession() {
+    /**
+     * Returns the current Supabase auth session and user.
+     * In mock mode (or when not authenticated), returns { session: null, user: null }.
+     */
+    const supabase = getSupabase();
+    if (!supabase) return { session: null, user: null };
+
+    const { data, error } = await supabase.auth.getSession();
+    if (error) throw new Error(error.message || "Could not load session.");
+
+    const session = data?.session || null;
+    const user = session?.user || null;
+    return { session, user };
+  },
+
+  // PUBLIC_INTERFACE
+  async getCurrentProfile() {
+    /**
+     * Fetches the current user's profile from `public.profiles` where id = auth.uid().
+     * Returns a minimal shape: { id, role, full_name } (null when not authenticated / not configured).
+     */
+    const supabase = getSupabase();
+    if (!supabase) return null;
+
+    const { session, user } = await this.getCurrentSession();
+    if (!session || !user) return null;
+
+    // IMPORTANT: Fetch by uid explicitly (not by email) to match RLS policies and the requirement.
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id,role,full_name")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message || "Could not load profile.");
+    return data ? { id: data.id, role: data.role || null, full_name: data.full_name || null } : null;
+  },
+
+  // PUBLIC_INTERFACE
   async createRequest({ user, vehicle, issueDescription, contact }) {
     /**
      * Admin creates a new request for a customer/user.

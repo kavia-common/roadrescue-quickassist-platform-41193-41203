@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { dataService } from "../services/dataService";
 
@@ -45,14 +45,16 @@ export function RequireAuth({ user, children }) {
    * Admin auth gate.
    *
    * Behavior:
-   * - In Supabase mode: wait for auth session to resolve, then fetch `public.profiles` for auth.uid()
-   *   and allow access only when `profile.role === 'admin'`.
+   * - In Supabase mode:
+   *   1) Wait for Supabase auth init (getSession + auth state subscription)
+   *   2) Fetch `public.profiles` where `id = auth.uid()`
+   *   3) Allow access only when `profile.role === 'admin'`
    * - In mock mode (no Supabase env): preserve the existing behavior using the `user` prop.
    *
-   * Also:
-   * - subscribes to Supabase auth state changes and re-fetches profile
-   * - provides loading and retry UI
-   * - emits minimal console.debug logs for uid + role (no secrets)
+   * Requirements implemented:
+   * - Explicit loading/error UI with bounded retries (no indefinite blocking)
+   * - Re-fetch profile after login navigation via auth change subscription
+   * - Temporary debug logs (console.info) of { uid, role, hasSession }
    */
   const location = useLocation();
 
@@ -61,52 +63,79 @@ export function RequireAuth({ user, children }) {
 
   const [loading, setLoading] = useState(Boolean(isSupa));
   const [error, setError] = useState("");
-  const [sessionUser, setSessionUser] = useState(null); // supabase auth user
-  const [profile, setProfile] = useState(null); // profiles row
+  const [sessionUser, setSessionUser] = useState(null); // Supabase auth user
+  const [profile, setProfile] = useState(null); // profiles row {id, role, full_name}
+  const [attempt, setAttempt] = useState(0);
+
+  const retryTimerRef = useRef(null);
 
   const canAccess = useMemo(() => {
     if (!isSupa) return Boolean(user); // keep existing fallback behavior
     return Boolean(profile && profile.role === "admin");
   }, [isSupa, user, profile]);
 
-  const loadSupabaseAuthAndProfile = async () => {
-    if (!supabase) return;
-
-    setLoading(true);
-    setError("");
-
-    try {
-      // Prefer session first to quickly resolve uid.
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-
-      const session = sessionData?.session || null;
-      const u = session?.user || null;
-
-      if (!u) {
-        // If no session, double-check getUser for completeness.
-        const { data: userData, error: userError } = await supabase.auth.getUser();
-        if (userError) throw userError;
-        setSessionUser(userData?.user || null);
-        setProfile(null);
-        console.debug("[admin-auth] uid:", userData?.user?.id || null, "role:", null);
-        return;
-      }
-
-      setSessionUser(u);
-      console.debug("[admin-auth] uid:", u.id);
-
-      const p = await dataService.getMyProfile();
-      setProfile(p);
-      console.debug("[admin-auth] uid:", u.id, "role:", p?.role || null);
-    } catch (e) {
-      setError(e?.message || "Could not verify your access. Please try again.");
-      setSessionUser(null);
-      setProfile(null);
-    } finally {
-      setLoading(false);
+  const clearRetryTimer = () => {
+    if (retryTimerRef.current) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
     }
   };
+
+  const logDebug = (payload) => {
+    // Temporary debugging as requested (no secrets).
+    console.info("[admin-auth]", payload);
+  };
+
+  const loadSupabaseAuthAndProfile = useCallback(
+    async ({ scheduleRetry } = { scheduleRetry: true }) => {
+      if (!supabase) return;
+
+      clearRetryTimer();
+      setLoading(true);
+      setError("");
+
+      try {
+        // 1) Wait for session resolution (Supabase init). This is the canonical source.
+        const { session, user: sUser } = await dataService.getCurrentSession();
+
+        const uid = sUser?.id || null;
+        const hasSession = Boolean(session);
+
+        // Debug: session resolved
+        logDebug({ uid, role: null, hasSession });
+
+        setSessionUser(sUser || null);
+
+        // Not authenticated -> no profile to fetch.
+        if (!sUser) {
+          setProfile(null);
+          return;
+        }
+
+        // 2) Fetch profile for auth.uid()
+        const p = await dataService.getCurrentProfile();
+        setProfile(p);
+
+        // Debug: profile resolved
+        logDebug({ uid, role: p?.role || null, hasSession });
+      } catch (e) {
+        setSessionUser(null);
+        setProfile(null);
+        setError(e?.message || "Could not verify your access. Please try again.");
+      } finally {
+        setLoading(false);
+
+        // 3) Bounded loading: if we still don't have a stable answer, re-check shortly once.
+        // This addresses cases where navigation happens quickly after login and session/profile propagation lags.
+        if (scheduleRetry && attempt < 1) {
+          retryTimerRef.current = window.setTimeout(() => {
+            setAttempt((a) => a + 1);
+          }, 650);
+        }
+      }
+    },
+    [supabase, attempt]
+  );
 
   useEffect(() => {
     if (!supabase) return;
@@ -115,25 +144,36 @@ export function RequireAuth({ user, children }) {
     let sub;
 
     (async () => {
-      await loadSupabaseAuthAndProfile();
+      await loadSupabaseAuthAndProfile({ scheduleRetry: true });
 
       // Subscribe to auth events (sign-in/out/token refresh) and re-check profile.
       const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!mounted) return;
-        console.debug("[admin-auth] auth event:", event, "uid:", session?.user?.id || null);
+
+        const uid = session?.user?.id || null;
+        logDebug({ uid, role: null, hasSession: Boolean(session) });
 
         // Always re-check profile on auth changes; role updates require a re-fetch.
-        await loadSupabaseAuthAndProfile();
+        await loadSupabaseAuthAndProfile({ scheduleRetry: false });
       });
+
       sub = data?.subscription;
     })();
 
     return () => {
       mounted = false;
+      clearRetryTimer();
       sub?.unsubscribe?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase]);
+  }, [supabase, loadSupabaseAuthAndProfile]);
+
+  // Trigger one bounded re-check after initial attempt, if needed.
+  useEffect(() => {
+    if (!supabase) return;
+    if (attempt > 0) {
+      loadSupabaseAuthAndProfile({ scheduleRetry: false });
+    }
+  }, [attempt, supabase, loadSupabaseAuthAndProfile]);
 
   // Mock mode: preserve old redirect behavior.
   if (!isSupa) {
@@ -148,22 +188,14 @@ export function RequireAuth({ user, children }) {
 
   // Supabase mode: authenticated but profile missing or not admin -> block
   if (!canAccess) {
-    if (error) {
-      return <Blocked title="Could not verify access" detail={error} onRetry={loadSupabaseAuthAndProfile} />;
-    }
+    // Keep the existing message wording for non-admins.
+    const detail =
+      error ||
+      (profile
+        ? `Your account role is '${profile.role || "unknown"}'. This portal is for admins only.`
+        : "We couldn't load your profile. This can happen if the profile row doesn't exist or access is restricted.");
 
-    // Note: profile may be null if RLS blocks reads or row doesn't exist.
-    return (
-      <Blocked
-        title="Access restricted"
-        detail={
-          profile
-            ? `Your account role is '${profile.role || "unknown"}'. This portal is for admins only.`
-            : "We couldn't load your profile. This can happen if the profile row doesn't exist or access is restricted."
-        }
-        onRetry={loadSupabaseAuthAndProfile}
-      />
-    );
+    return <Blocked title={error ? "Could not verify access" : "Access restricted"} detail={detail} onRetry={() => loadSupabaseAuthAndProfile({ scheduleRetry: false })} />;
   }
 
   return children;
