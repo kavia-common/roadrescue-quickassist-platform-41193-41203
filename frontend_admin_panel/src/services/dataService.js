@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { normalizeStatus } from "./statusUtils";
 
 const LS_KEYS = {
   session: "rrqa.session",
@@ -384,14 +385,17 @@ export const dataService = {
         vehicle: r.vehicle,
         issueDescription: r.issue_description,
         contact: r.contact,
-        status: r.status,
+        status: normalizeStatus(r.status),
         assignedMechanicId: r.assigned_mechanic_id,
         assignedMechanicEmail: r.assigned_mechanic_email,
         notes: r.notes || [],
       }));
     }
 
-    return getLocalRequests().slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return getLocalRequests()
+      .slice()
+      .map((r) => ({ ...r, status: normalizeStatus(r.status) }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   },
 
   // PUBLIC_INTERFACE

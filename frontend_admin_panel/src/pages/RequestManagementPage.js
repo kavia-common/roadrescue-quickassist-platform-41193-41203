@@ -4,21 +4,20 @@ import { Table } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { dataService } from "../services/dataService";
+import { normalizeStatus, statusLabel } from "../services/statusUtils";
 
-const STATUS_OPTIONS = ["Submitted", "In Review", "Assigned", "In Progress", "Completed", "Accepted", "En Route", "Working"];
+const STATUS_OPTIONS = ["OPEN", "ASSIGNED", "EN_ROUTE", "WORKING", "COMPLETED"];
 
 function statusPill(status) {
+  const canonical = normalizeStatus(status);
   const map = {
-    Submitted: { bg: "rgba(37,99,235,0.08)", border: "rgba(37,99,235,0.25)", color: "#1D4ED8" },
-    "In Review": { bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.25)", color: "#92400E" },
-    Assigned: { bg: "rgba(37,99,235,0.08)", border: "rgba(37,99,235,0.25)", color: "#1D4ED8" },
-    "In Progress": { bg: "rgba(37,99,235,0.08)", border: "rgba(37,99,235,0.25)", color: "#1D4ED8" },
-    Accepted: { bg: "rgba(37,99,235,0.08)", border: "rgba(37,99,235,0.25)", color: "#1D4ED8" },
-    "En Route": { bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.25)", color: "#92400E" },
-    Working: { bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.25)", color: "#92400E" },
-    Completed: { bg: "rgba(16,185,129,0.10)", border: "rgba(16,185,129,0.25)", color: "#065F46" },
+    OPEN: { bg: "rgba(37,99,235,0.08)", border: "rgba(37,99,235,0.25)", color: "#1D4ED8" },
+    ASSIGNED: { bg: "rgba(37,99,235,0.08)", border: "rgba(37,99,235,0.25)", color: "#1D4ED8" },
+    EN_ROUTE: { bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.25)", color: "#92400E" },
+    WORKING: { bg: "rgba(245,158,11,0.10)", border: "rgba(245,158,11,0.25)", color: "#92400E" },
+    COMPLETED: { bg: "rgba(16,185,129,0.10)", border: "rgba(16,185,129,0.25)", color: "#065F46" },
   };
-  const s = map[status] || { bg: "#fff", border: "rgba(229,231,235,1)", color: "var(--text)" };
+  const s = map[canonical] || { bg: "#fff", border: "rgba(229,231,235,1)", color: "var(--text)" };
   return (
     <span
       style={{
@@ -33,7 +32,7 @@ function statusPill(status) {
         color: s.color,
       }}
     >
-      {status}
+      {statusLabel(canonical)}
     </span>
   );
 }
@@ -65,7 +64,7 @@ export function RequestManagementPage() {
       const s = {};
       const a = {};
       r.forEach((req) => {
-        s[req.id] = req.status;
+        s[req.id] = normalizeStatus(req.status);
         a[req.id] = req.assignedMechanicId || "";
       });
       setStatusById(s);
@@ -140,12 +139,12 @@ export function RequestManagementPage() {
                       <div className="label">Status</div>
                       <select
                         className="input"
-                        value={statusById[r.id] || r.status}
-                        onChange={(e) => setStatusById((s) => ({ ...s, [r.id]: e.target.value }))}
+                        value={statusById[r.id] || normalizeStatus(r.status)}
+                        onChange={(e) => setStatusById((s) => ({ ...s, [r.id]: normalizeStatus(e.target.value) }))}
                       >
                         {STATUS_OPTIONS.map((s) => (
                           <option key={s} value={s}>
-                            {s}
+                            {statusLabel(s)}
                           </option>
                         ))}
                       </select>
@@ -196,7 +195,7 @@ export function RequestManagementPage() {
 function QuickReassign({ mechanics, onDone }) {
   const [requestId, setRequestId] = useState("");
   const [mechanicEmail, setMechanicEmail] = useState("");
-  const [status, setStatus] = useState("Assigned");
+  const [status, setStatus] = useState("ASSIGNED");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
@@ -236,7 +235,7 @@ function QuickReassign({ mechanics, onDone }) {
         <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {statusLabel(s)}
             </option>
           ))}
         </select>

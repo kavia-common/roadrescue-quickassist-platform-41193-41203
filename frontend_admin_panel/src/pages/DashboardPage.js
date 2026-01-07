@@ -31,8 +31,10 @@ export function DashboardPage() {
   const kpis = useMemo(() => {
     const totalUsers = users.filter((u) => u.role === "user").length;
     const totalMechanics = users.filter((u) => u.role === "mechanic" || u.role === "approved_mechanic").length;
-    const openRequests = requests.filter((r) => r.status !== "Completed").length;
-    const completedRequests = requests.filter((r) => r.status === "Completed").length;
+
+    // requests are normalized in dataService; treat only COMPLETED as closed
+    const openRequests = requests.filter((r) => r.status !== "COMPLETED").length;
+    const completedRequests = requests.filter((r) => r.status === "COMPLETED").length;
     return { totalUsers, totalMechanics, openRequests, completedRequests };
   }, [users, requests]);
 
