@@ -36,7 +36,10 @@ function App() {
 
   if (!booted) return <div className="app-shell"><div className="container"><div className="skeleton">Loading…</div></div></div>;
 
-  const authedAdmin = user && user.role === "admin" ? user : null;
+  // Accept demo session as root admin if present (for robust routing/redirect)
+  const demoEnabled = typeof window !== "undefined" && require("./services/dataService").dataService.isDemoEnabled?.() === true;
+  const demoSession = demoEnabled ? require("./services/dataService").dataService.getDemoSession?.() : null;
+  const authedAdmin = (user && user.role === "admin") ? user : (demoSession && demoSession.role === "admin" ? demoSession : null);
 
   return (
     <BrowserRouter>
@@ -45,7 +48,11 @@ function App() {
         <main className="main">
           <Routes>
             <Route path="/" element={<Navigate to={authedAdmin ? "/dashboard" : "/login"} replace />} />
-            <Route path="/login" element={<LoginPage onAuthed={setUser} />} />
+            <Route path="/login" element={
+              (demoEnabled && demoSession && demoSession.role === "admin")
+                ? <Navigate to="/dashboard" replace />
+                : <LoginPage onAuthed={setUser} />
+            } />
 
             <Route
               path="/dashboard"

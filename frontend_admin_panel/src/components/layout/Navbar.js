@@ -3,14 +3,18 @@ import { Link, NavLink, useNavigate } from "react-router-dom";
 import { Button } from "../ui/Button";
 import { dataService } from "../../services/dataService";
 
-// PUBLIC_INTERFACE
+/**
+ * PUBLIC_INTERFACE
+ */
 export function Navbar({ user }) {
-  /** Admin panel navigation. */
+  /** Admin panel navigation and demo diagnostics. */
   const navigate = useNavigate();
   const demoEnabled = useMemo(() => dataService.isDemoEnabled?.() === true, [window.location.href]);
 
   const onLogout = async () => {
-    await dataService.logout();
+    // Always robustly clear demo session and regular, then go to login.
+    try { dataService.clearDemoSession?.(); } catch {}
+    await dataService.logout?.();
     navigate("/login");
   };
 

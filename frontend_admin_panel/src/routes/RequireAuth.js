@@ -331,17 +331,28 @@ export function RequireAuth({ user, children }) {
 
   // Mock mode: preserve old redirect behavior, but in DEMO mode explicitly accept demo session (robust demo flag).
   if (!isSupa) {
-    // Accept local demo session even if user is null, in explicit demo mode
-    const hasDemoSession = !!window.localStorage.getItem(dataService.demoSessionKey);
-    const shouldAllow =
-      (user && user.role === "admin") ||
-      (dataService.isDemoEnabled?.() && hasDemoSession);
+    // DEMO hardmode: unconditionally accept demo session if flag is on, regardless of user prop
+    if (dataService.isDemoEnabled?.() === true) {
+      const demo = dataService.getDemoSession?.();
+      if (demo && demo.role === "admin") {
+        if (process.env.NODE_ENV !== "production") {
+          //eslint-disable-next-line
+          console.info("[DEMO] RequireAuth: ALLOW demo admin session", { demo });
+        }
+        return (
+          <>
+            {children}
+            {debugPanel}
+          </>
+        );
+      }
+      // If demo enabled but demo session is missing, block
+      return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+    }
 
-    if (!shouldAllow) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-    
-    if (process.env.NODE_ENV !== "production" && dataService.isDemoEnabled?.()) {
-      //eslint-disable-next-line
-      console.info("[DEMO] RequireAuth: demo mode detected, session", { user, hasDemoSession });
+    // legacy fallback for non-demo, non-supabase: only allow user.role==='admin'
+    if (!(user && user.role === "admin")) {
+      return <Navigate to="/login" replace state={{ from: location.pathname }} />;
     }
     return (
       <>

@@ -235,7 +235,43 @@ async function supaGetProfile(supabase, userId, email) {
  * These are additive and simply call through to `dataService` so existing imports continue working.
  */
 
+/** DEMO-ONLY utilities: hardmode, used by demo-only login and hard redirect **/
+
 // PUBLIC_INTERFACE
+export function createDemoAdminSession() {
+  /**
+   * Set up demo admin session and persist to localStorage.
+   * Always clears local session. Only sets if DEMO mode enabled.
+   */
+  if (!isDemoEnabled()) throw new Error("Demo Admin mode is not enabled.");
+  clearLocalSession();
+  clearDemoAdminSession();
+  const session = { ...DEMO_ADMIN };
+  setDemoAdminSession(session);
+  if (process.env.NODE_ENV !== "production") {
+    //eslint-disable-next-line
+    console.info("[DEMO] Demo admin session explicitly persisted.");
+  }
+  return session;
+}
+
+// PUBLIC_INTERFACE
+export function getDemoSession() {
+  /**
+   * Returns the demo admin session object, or null if absent.
+   * Used for robust hardmode auth fallback everywhere.
+   */
+  return getDemoAdminSession();
+}
+
+// PUBLIC_INTERFACE
+export function clearDemoSession() {
+  /**
+   * Explicitly clear demo admin session (used on logout and for hardmode E2E).
+   */
+  clearDemoAdminSession();
+}
+
 export async function getCurrentSession() {
   /** Resolves { session, userId } for the current auth session (userId null when not signed in / not configured). */
   const { session, user } = await dataService.getCurrentSession();
@@ -260,23 +296,11 @@ export const dataService = {
   demoSessionKey: LS_KEYS.demoAdminSession,
 
   // PUBLIC_INTERFACE
-  createDemoAdminSession() {
-    /** 
-     * Creates and persists the Demo Admin session. Idempotent. Only sets if demo mode is enabled.
-     * Also logs a diagnostic message in dev for troubleshooting.
-     */
-    if (!isDemoEnabled()) throw new Error("Demo Admin mode is not enabled.");
-    // Clear any existing sessions for safety, then write demo admin.
-    clearLocalSession();
-    const session = { ...DEMO_ADMIN };
-    setDemoAdminSession(session);
-    if (process.env.NODE_ENV !== "production") {
-      // minimal diagnostic
-      //eslint-disable-next-line
-      console.info("[DEMO] Demo admin session created and persisted");
-    }
-    return session;
-  },
+  createDemoAdminSession,
+  // PUBLIC_INTERFACE
+  getDemoSession,
+  // PUBLIC_INTERFACE
+  clearDemoSession,
 
   // PUBLIC_INTERFACE
   async getCurrentSession() {
