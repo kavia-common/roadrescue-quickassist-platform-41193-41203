@@ -162,6 +162,26 @@ async function supaGetProfile(supabase, userId, email) {
 /**
  * PUBLIC_INTERFACE
  */
+/**
+ * Standalone helpers (requested for debug instrumentation).
+ * These are additive and simply call through to `dataService` so existing imports continue working.
+ */
+
+// PUBLIC_INTERFACE
+export async function getCurrentSession() {
+  /** Resolves { session, userId } for the current auth session (userId null when not signed in / not configured). */
+  const { session, user } = await dataService.getCurrentSession();
+  return { session, userId: user?.id || null };
+}
+
+// PUBLIC_INTERFACE
+export async function getCurrentProfile() {
+  /** Resolves { role, full_name } for the current user or null if not found / not signed in / not configured. */
+  const p = await dataService.getCurrentProfile();
+  if (!p) return null;
+  return { role: p.role || null, full_name: p.full_name || null };
+}
+
 export const dataService = {
   /** Admin facade: users, approvals, requests, fees (Supabase optional). */
 
@@ -170,6 +190,8 @@ export const dataService = {
     /**
      * Returns the current Supabase auth session and user.
      * In mock mode (or when not authenticated), returns { session: null, user: null }.
+     *
+     * NOTE: This method is used by the admin auth gate; keep the shape stable.
      */
     const supabase = getSupabase();
     if (!supabase) return { session: null, user: null };
