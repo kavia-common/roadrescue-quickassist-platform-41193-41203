@@ -179,16 +179,17 @@ export function LoginPage({ onAuthed }) {
                     }
                   : undefined
               }
-              onClick={
-                demoEnabled
-                  ? (e) => {
-                      e.preventDefault();
-                      setError(
-                        "Demo mode is enabled. Please use the 'Login as Demo Admin' button below. Email/password Sign In is disabled in demo mode."
-                      );
-                    }
-                  : undefined
-              }
+              onClick={(e) => {
+                // Force credential path never to fire in demo mode,
+                // even if handler is accidentally enabled by test/automation.
+                if (demoEnabled) {
+                  e.preventDefault();
+                  setError(
+                    "Demo mode is enabled. Please use the 'Login as Demo Admin' button below. Email/password Sign In is disabled in demo mode."
+                  );
+                  return;
+                }
+              }}
             >
               {busy ? "Signing in..." : "Sign in"}
             </Button>

@@ -434,21 +434,17 @@ export const dataService = {
   async logout() {
     /**
      * Logout behavior:
-     * - In demo mode: clears demo admin session
+     * - Always clears both demo admin and mock session for consistency.
      * - In Supabase mode: signs out supabase
-     * - In mock mode: clears rrqa.session
      */
-    if (isDemoEnabled()) {
-      clearDemoAdminSession();
-      return;
-    }
+    clearDemoAdminSession();
+    clearLocalSession();
 
     const supabase = getSupabase();
     if (supabase) {
       await supabase.auth.signOut();
       return;
     }
-    clearLocalSession();
   },
 
   // PUBLIC_INTERFACE
