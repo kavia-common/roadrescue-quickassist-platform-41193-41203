@@ -62,10 +62,12 @@ export function LoginPage({ onAuthed }) {
       }
       // For demo mode: call dataService to persist and use Demo Admin session directly
       await dataService.createDemoAdminSession?.();
-      // After session is set, fetch demo profile/user for app state
+      // After session is set, re-fetch demo profile/user for app state
+      // Defensive: wait a microtask to ensure localStorage is flushed before reading.
+      await Promise.resolve();
       const currentUser = await dataService.getCurrentUser();
       onAuthed?.(currentUser);
-      navigate("/dashboard");
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(err.message || "Demo login failed.");
     } finally {
@@ -79,7 +81,7 @@ export function LoginPage({ onAuthed }) {
     setError("");
     // When demo is enabled, block form credential login to force the demo flow
     if (demoEnabled) {
-      setError("In Demo mode, use the 'Login as Demo Admin' button below.");
+      setError("Demo mode: To log in, click 'Login as Demo Admin' below. Standard credentials are not accepted in demo mode.");
       return;
     }
     if (!email.trim()) return setError("Email is required.");
@@ -103,6 +105,19 @@ export function LoginPage({ onAuthed }) {
         </p>
       </div>
 
+      {/* New: Demo diagnosis banner at top */}
+      {demoEnabled && (
+        <div className="alert alert-info" style={{ marginBottom: 16 }}>
+          <div>
+            <strong>Demo mode is ON.</strong> (<code>REACT_APP_DEMO_ADMIN_ENABLED</code> =
+            <span style={{ fontWeight: 800, color: "#92400E", margin: "0 4px" }}>
+              {String(process.env.REACT_APP_DEMO_ADMIN_ENABLED)}
+            </span>)
+            <br />
+            This enables the <span style={{fontWeight: 900}}>Login as Demo Admin</span> button below.
+          </div>
+        </div>
+      )}
       <Card
         title="Login"
         subtitle={
