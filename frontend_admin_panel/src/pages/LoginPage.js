@@ -182,7 +182,7 @@ export function LoginPage({ onAuthed }) {
             <div className="hint" style={{ marginTop: 6 }}>
               Demo credentials: <strong>{DEMO.email}</strong> /{" "}
               <strong>{DEMO.password}</strong>. Session is stored locally in{" "}
-              <code>localStorage</code> as <code>admin_session</code>.
+              <code>localStorage</code> as <code>{dataService.demoSessionKey}</code>.
             </div>
           ) : null}
         </form>

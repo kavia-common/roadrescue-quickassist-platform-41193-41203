@@ -7,7 +7,7 @@ import { dataService } from "../../services/dataService";
 export function Navbar({ user }) {
   /** Admin panel navigation. */
   const navigate = useNavigate();
-  const demoEnabled = useMemo(() => dataService.isDemoEnabled?.() === true, []);
+  const demoEnabled = useMemo(() => dataService.isDemoEnabled?.() === true, [window.location.href]);
 
   const onLogout = async () => {
     await dataService.logout();

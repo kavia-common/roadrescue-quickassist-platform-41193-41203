@@ -257,6 +257,9 @@ export const dataService = {
   isDemoEnabled,
 
   // PUBLIC_INTERFACE
+  demoSessionKey: LS_KEYS.demoAdminSession,
+
+  // PUBLIC_INTERFACE
   createDemoAdminSession() {
     /** Creates and persists the Demo Admin session. Idempotent. Only sets if demo mode is enabled. */
     if (!isDemoEnabled()) throw new Error("Demo Admin mode is not enabled.");
