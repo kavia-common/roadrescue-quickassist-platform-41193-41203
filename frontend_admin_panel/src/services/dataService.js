@@ -257,6 +257,15 @@ export const dataService = {
   isDemoEnabled,
 
   // PUBLIC_INTERFACE
+  createDemoAdminSession() {
+    /** Creates and persists the Demo Admin session. Idempotent. Only sets if demo mode is enabled. */
+    if (!isDemoEnabled()) throw new Error("Demo Admin mode is not enabled.");
+    const session = { ...DEMO_ADMIN };
+    setDemoAdminSession(session);
+    return session;
+  },
+
+  // PUBLIC_INTERFACE
   async getCurrentSession() {
     /**
      * Returns the current auth session and user.

@@ -28,25 +28,13 @@ export function LoginPage({ onAuthed }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // Core login logic; distinguishes credential path vs. demo
+  // Core login logic; distinguishes credential path vs. demo.
+  // Canonical credential login. Demo session bypass will use a different codepath.
   const completeLogin = async (emailValue, passwordValue) => {
-    // In demo mode, only allow the specific demo credentials.
-    if (demoEnabled) {
-      // Only allow demo admin for email and pw, all others must fail with explicit error.
-      if (
-        emailValue.trim().toLowerCase() !== DEMO.email ||
-        passwordValue !== DEMO.password
-      ) {
-        throw new Error(
-          `In Demo mode, only "${DEMO.email}" / "${DEMO.password}" are allowed. Use the 'Login as Demo Admin' button.`
-        );
-      }
-    }
-    // Step 1: authenticate
+    // In non-demo (Supabase or mock) mode, attempt login and profile load as usual.
     const u = await dataService.login(emailValue.trim(), passwordValue);
 
-    // Step 2 (canonical): load profile by id=auth.uid() and gate on role='admin'
-    // In demo mode, getCurrentProfile() is provided by dataService (local session) and returns role='admin'.
+    // Step 2: load profile and check admin rights.
     const profile = await dataService.getCurrentProfile();
     if (!profile) {
       throw new Error(
@@ -62,20 +50,22 @@ export function LoginPage({ onAuthed }) {
     navigate("/dashboard");
   };
 
-  // Direct demo session creation—never perform normal login logic in demo mode
+  // True Demo Admin login: this directly creates demo admin session, does not call credential auth
   const demoLogin = async () => {
     setError("");
     setBusy(true);
     try {
-      // Save demo session directly using service interface (no credential check)
-      // Only proceed if demoMode is active
       if (!demoEnabled) {
         setError("Demo mode is not enabled.");
         setBusy(false);
         return;
       }
-      // Use demo credentials directly
-      await completeLogin(DEMO.email, DEMO.password);
+      // For demo mode: call dataService to persist and use Demo Admin session directly
+      await dataService.createDemoAdminSession?.();
+      // After session is set, fetch demo profile/user for app state
+      const currentUser = await dataService.getCurrentUser();
+      onAuthed?.(currentUser);
+      navigate("/dashboard");
     } catch (err) {
       setError(err.message || "Demo login failed.");
     } finally {
