@@ -138,6 +138,27 @@ async function supaGetUserRole(supabase, userId, email) {
   }
 }
 
+async function supaGetProfile(supabase, userId, email) {
+  try {
+    const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").eq("id", userId).maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      // Create a default profile row if missing; policies should allow self-insert by id=auth.uid().
+      const { data: inserted, error: insertError } = await supabase
+        .from("profiles")
+        .insert({ id: userId, email, role: "user", approved: true })
+        .select("id,email,role,approved,profile")
+        .maybeSingle();
+      if (insertError) throw insertError;
+      return inserted || null;
+    }
+    return data;
+  } catch (e) {
+    // Let caller decide how to surface errors.
+    throw new Error(e?.message || "Could not load profile.");
+  }
+}
+
 /**
  * PUBLIC_INTERFACE
  */
@@ -180,11 +201,7 @@ export const dataService = {
         assigned_mechanic_email: null,
         notes: [],
       };
-      const { data, error } = await supabase
-        .from("requests")
-        .insert(insertPayload)
-        .select()
-        .maybeSingle();
+      const { data, error } = await supabase.from("requests").insert(insertPayload).select().maybeSingle();
 
       if (error) throw new Error(error.message);
       if (!data) throw new Error("Failed to insert request.");
@@ -370,4 +387,26 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   isSupabaseConfigured,
+
+  // PUBLIC_INTERFACE
+  getSupabaseClient() {
+    /** Returns a Supabase client when configured, otherwise null (keeps mock/localStorage mode working). */
+    return getSupabase();
+  },
+
+  // PUBLIC_INTERFACE
+  async getMyProfile() {
+    /**
+     * Loads the currently logged-in user's profile row from `public.profiles` (id = auth.uid()).
+     * Returns null when not authenticated or when Supabase isn't configured.
+     */
+    const supabase = getSupabase();
+    if (!supabase) return null;
+
+    const { data } = await supabase.auth.getUser();
+    const user = data?.user;
+    if (!user) return null;
+
+    return await supaGetProfile(supabase, user.id, user.email);
+  },
 };
