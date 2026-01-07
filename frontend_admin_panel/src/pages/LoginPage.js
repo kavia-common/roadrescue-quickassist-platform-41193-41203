@@ -144,6 +144,7 @@ export function LoginPage({ onAuthed }) {
         }
       >
         <form className="form" onSubmit={submit} autoComplete="on">
+          {/* In demo mode, do not allow normal Sign In; disable inputs and show message. */}
           <Input
             label="Email"
             name="email"
@@ -167,7 +168,28 @@ export function LoginPage({ onAuthed }) {
           {error ? <div className="alert alert-error">{error}</div> : null}
 
           <div className="row">
-            <Button type="submit" disabled={busy || demoEnabled}>
+            <Button
+              type="submit"
+              disabled={busy || demoEnabled}
+              style={
+                demoEnabled
+                  ? {
+                      opacity: 0.5,
+                      cursor: "not-allowed",
+                    }
+                  : undefined
+              }
+              onClick={
+                demoEnabled
+                  ? (e) => {
+                      e.preventDefault();
+                      setError(
+                        "Demo mode is enabled. Please use the 'Login as Demo Admin' button below. Email/password Sign In is disabled in demo mode."
+                      );
+                    }
+                  : undefined
+              }
+            >
               {busy ? "Signing in..." : "Sign in"}
             </Button>
             {demoEnabled ? (
