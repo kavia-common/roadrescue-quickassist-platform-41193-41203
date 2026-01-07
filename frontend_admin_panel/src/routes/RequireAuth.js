@@ -180,7 +180,8 @@ export function RequireAuth({ user, children }) {
   };
 
   const logDebug = (payload) => {
-    // Temporary debugging as requested (no secrets).
+    // Temporary debugging as requested (no secrets). Dev-only to avoid production noise.
+    if (!shouldShowDebugPanel()) return;
     console.info("[admin-auth]", payload);
   };
 

@@ -21,9 +21,24 @@ export function LoginPage({ onAuthed }) {
     if (password.length < 6) return setError("Password must be at least 6 characters.");
     setBusy(true);
     try {
+      // Step 1: authenticate
       const u = await dataService.login(email.trim(), password);
-      if (u.role !== "admin") throw new Error("This portal is for admins only.");
-      onAuthed?.(u);
+
+      // Step 2 (canonical): load profile by id=auth.uid() and gate on role='admin'
+      // This avoids relying on any fallback role value and ensures we surface RLS/profile issues clearly.
+      const profile = await dataService.getCurrentProfile();
+
+      if (!profile) {
+        throw new Error(
+          "Signed in, but your profile could not be loaded. Ensure public.profiles has a row with id = auth.uid() and role = 'admin', and that RLS permits select."
+        );
+      }
+
+      if (profile.role !== "admin") {
+        throw new Error(`This portal is for admins only. Your role is '${profile.role || "unknown"}'.`);
+      }
+
+      onAuthed?.({ ...u, role: "admin" });
       navigate("/dashboard");
     } catch (err) {
       setError(err.message || "Login failed.");

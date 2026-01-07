@@ -127,14 +127,33 @@ function setLocalFees(fees) {
 async function supaGetUserRole(supabase, userId, email) {
   try {
     const { data, error } = await supabase.from("profiles").select("role,approved").eq("id", userId).maybeSingle();
-    if (error) return { role: "user", approved: true };
+
+    // IMPORTANT:
+    // Do not silently downgrade to role='user' on read errors. That masks the true cause (often RLS),
+    // and incorrectly blocks real admins.
+    if (error) {
+      throw new Error(error.message || "Could not read profiles.role for current user.");
+    }
+
     if (!data) {
-      await supabase.from("profiles").insert({ id: userId, email, role: "user", approved: true });
+      // Try to self-create a profile row if policies allow (id must equal auth.uid()).
+      const { error: insertError } = await supabase.from("profiles").insert({ id: userId, email, role: "user", approved: true });
+      if (insertError) {
+        throw new Error(
+          insertError.message ||
+            "Profile row is missing and could not be created. Check profiles table schema and RLS policies."
+        );
+      }
       return { role: "user", approved: true };
     }
+
     return { role: data.role || "user", approved: data.approved ?? true };
-  } catch {
-    return { role: "user", approved: true };
+  } catch (e) {
+    // Bubble up a useful message for UI to present.
+    throw new Error(
+      e?.message ||
+        "Could not verify your role. Ensure a public.profiles row exists with id = auth.uid() and role = 'admin', and that RLS permits select."
+    );
   }
 }
 
