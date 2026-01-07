@@ -138,94 +138,11 @@ async function supaGetUserRole(supabase, userId, email) {
   }
 }
 
-async function supaGetProfile(supabase, userId, email) {
-  try {
-    const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").eq("id", userId).maybeSingle();
-    if (error) throw error;
-    if (!data) {
-      // Create a default profile row if missing; policies should allow self-insert by id=auth.uid().
-      const { data: inserted, error: insertError } = await supabase
-        .from("profiles")
-        .insert({ id: userId, email, role: "user", approved: true })
-        .select("id,email,role,approved,profile")
-        .maybeSingle();
-      if (insertError) throw insertError;
-      return inserted || null;
-    }
-    return data;
-  } catch (e) {
-    // Let caller decide how to surface errors.
-    throw new Error(e?.message || "Could not load profile.");
-  }
-}
-
 /**
  * PUBLIC_INTERFACE
  */
-/**
- * Standalone helpers (requested for debug instrumentation).
- * These are additive and simply call through to `dataService` so existing imports continue working.
- */
-
-// PUBLIC_INTERFACE
-export async function getCurrentSession() {
-  /** Resolves { session, userId } for the current auth session (userId null when not signed in / not configured). */
-  const { session, user } = await dataService.getCurrentSession();
-  return { session, userId: user?.id || null };
-}
-
-// PUBLIC_INTERFACE
-export async function getCurrentProfile() {
-  /** Resolves { role, full_name } for the current user or null if not found / not signed in / not configured. */
-  const p = await dataService.getCurrentProfile();
-  if (!p) return null;
-  return { role: p.role || null, full_name: p.full_name || null };
-}
-
 export const dataService = {
   /** Admin facade: users, approvals, requests, fees (Supabase optional). */
-
-  // PUBLIC_INTERFACE
-  async getCurrentSession() {
-    /**
-     * Returns the current Supabase auth session and user.
-     * In mock mode (or when not authenticated), returns { session: null, user: null }.
-     *
-     * NOTE: This method is used by the admin auth gate; keep the shape stable.
-     */
-    const supabase = getSupabase();
-    if (!supabase) return { session: null, user: null };
-
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw new Error(error.message || "Could not load session.");
-
-    const session = data?.session || null;
-    const user = session?.user || null;
-    return { session, user };
-  },
-
-  // PUBLIC_INTERFACE
-  async getCurrentProfile() {
-    /**
-     * Fetches the current user's profile from `public.profiles` where id = auth.uid().
-     * Returns a minimal shape: { id, role, full_name } (null when not authenticated / not configured).
-     */
-    const supabase = getSupabase();
-    if (!supabase) return null;
-
-    const { session, user } = await this.getCurrentSession();
-    if (!session || !user) return null;
-
-    // IMPORTANT: Fetch by uid explicitly (not by email) to match RLS policies and the requirement.
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,role,full_name")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (error) throw new Error(error.message || "Could not load profile.");
-    return data ? { id: data.id, role: data.role || null, full_name: data.full_name || null } : null;
-  },
 
   // PUBLIC_INTERFACE
   async createRequest({ user, vehicle, issueDescription, contact }) {
@@ -263,7 +180,11 @@ export const dataService = {
         assigned_mechanic_email: null,
         notes: [],
       };
-      const { data, error } = await supabase.from("requests").insert(insertPayload).select().maybeSingle();
+      const { data, error } = await supabase
+        .from("requests")
+        .insert(insertPayload)
+        .select()
+        .maybeSingle();
 
       if (error) throw new Error(error.message);
       if (!data) throw new Error("Failed to insert request.");
@@ -449,26 +370,4 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   isSupabaseConfigured,
-
-  // PUBLIC_INTERFACE
-  getSupabaseClient() {
-    /** Returns a Supabase client when configured, otherwise null (keeps mock/localStorage mode working). */
-    return getSupabase();
-  },
-
-  // PUBLIC_INTERFACE
-  async getMyProfile() {
-    /**
-     * Loads the currently logged-in user's profile row from `public.profiles` (id = auth.uid()).
-     * Returns null when not authenticated or when Supabase isn't configured.
-     */
-    const supabase = getSupabase();
-    if (!supabase) return null;
-
-    const { data } = await supabase.auth.getUser();
-    const user = data?.user;
-    if (!user) return null;
-
-    return await supaGetProfile(supabase, user.id, user.email);
-  },
 };
