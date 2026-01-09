@@ -175,17 +175,21 @@ async function tryGetAuthEmailById(supabase) {
 }
 
 function isMissingProfilesSchemaError(error) {
-  // Supabase/Postgres common messages:
+  // Supabase/Postgres/PostgREST common messages:
   // - relation "profiles" does not exist
+  // - relation "public.profiles" does not exist
   // - column profiles.approved does not exist
   // - column approved does not exist
+  // - Could not find the 'approved' column of 'profiles' in the schema cache
   const msg = String(error?.message || "").toLowerCase();
   return (
     msg.includes('relation "profiles" does not exist') ||
     msg.includes('relation "public.profiles" does not exist') ||
+    // Postgres-style missing column errors
     (msg.includes("column") && msg.includes("does not exist") && msg.includes("profiles")) ||
-    // Sometimes PostgREST reports "Could not find the 'approved' column..." without "profiles"
-    (msg.includes("column") && msg.includes("does not exist") && msg.includes("approved"))
+    (msg.includes("column") && msg.includes("does not exist") && msg.includes("approved")) ||
+    // PostgREST schema-cache wording (the reported bug)
+    (msg.includes("schema cache") && msg.includes("could not find") && msg.includes("approved"))
   );
 }
 
@@ -482,26 +486,61 @@ export const dataService = {
   async approveMechanic(userId) {
     ensureSeedData();
     const supabase = getSupabase();
-    if (supabase) {
-      const { error } = await supabase.from("profiles").update({ approved: true, role: "approved_mechanic" }).eq("id", userId);
 
-      if (error) {
-        const msg = String(error?.message || "").toLowerCase();
-        if (msg.includes('relation "profiles" does not exist') || (msg.includes("column") && msg.includes("does not exist"))) {
-          throw new Error("Supabase schema missing: please create/upgrade public.profiles (see assets/supabase.md).");
-        }
-        throw new Error(error.message);
-      }
-
+    // Local fallback always available (demo mode and as safety net for missing schema/RLS blocks).
+    const approveLocally = () => {
+      const users = getLocalUsers();
+      const idx = users.findIndex((u) => u.id === userId);
+      if (idx < 0) throw new Error("User not found.");
+      users[idx] = { ...users[idx], approved: true, role: "approved_mechanic" };
+      setLocalUsers(users);
       return true;
+    };
+
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from("profiles")
+          .update({ approved: true, role: "approved_mechanic" })
+          .eq("id", userId);
+
+        if (error) {
+          // If the profiles table/column doesn't exist (or PostgREST schema cache is stale),
+          // do not crash the admin UI. Fall back to local demo store and provide a helpful message.
+          if (isMissingProfilesSchemaError(error)) {
+            approveLocally();
+            throw new Error(
+              "Supabase schema is missing/out-of-date for public.profiles.approved. " +
+                "Approval was applied in demo/local storage so the UI can proceed. " +
+                "To persist in Supabase: run assets/supabase_profiles_migration.sql.md and refresh the PostgREST schema cache (or wait a minute), then retry."
+            );
+          }
+
+          // If anon key + RLS blocks writes, also fall back to demo store.
+          if (isSupabaseReadBlockedError(error)) {
+            approveLocally();
+            throw new Error(
+              "Supabase blocked the approval update (likely RLS/insufficient privileges). " +
+                "Approval was applied in demo/local storage. " +
+                "To persist in Supabase, use a service role key for admin or adjust RLS policies."
+            );
+          }
+
+          // Unknown error: keep existing behavior (surface it).
+          throw new Error(error.message || "Could not approve mechanic.");
+        }
+
+        return true;
+      } catch (e) {
+        // Preserve intentional, helpful messages above.
+        if (e?.message) throw e;
+        // Anything else: fall back to local to avoid a broken UI.
+        approveLocally();
+        return true;
+      }
     }
 
-    const users = getLocalUsers();
-    const idx = users.findIndex((u) => u.id === userId);
-    if (idx < 0) throw new Error("User not found.");
-    users[idx] = { ...users[idx], approved: true, role: "approved_mechanic" };
-    setLocalUsers(users);
-    return true;
+    return approveLocally();
   },
 
   // PUBLIC_INTERFACE

@@ -12,8 +12,11 @@ This project’s frontends expect a `public.profiles` table to exist and to incl
 If you see errors like:
 - `relation "profiles" does not exist`
 - `column profiles.approved does not exist`
+- `Could not find the 'approved' column of 'profiles' in the schema cache`
 
 Run the SQL below in **Supabase Dashboard → SQL Editor**.
+
+After running the SQL, if the UI still errors with “schema cache”, wait briefly and/or refresh PostgREST's schema cache (Supabase Dashboard refresh, or simply retry after a minute) so PostgREST recognizes the new column.
 
 ---
 
