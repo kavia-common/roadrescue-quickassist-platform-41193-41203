@@ -20,4 +20,15 @@ This app supports two modes:
 
 Demo admin (mock mode): `admin@example.com` / `password123`
 
+## Demo login button (Supabase mode)
+To show a **DEMO login** button on the admin login screen (Supabase sign-in using preset credentials), set:
+
+- `REACT_APP_DEMO_ADMIN_ENABLED=true`
+- `REACT_APP_DEMO_ADMIN_EMAIL=<demo-admin-email>`
+- `REACT_APP_DEMO_ADMIN_PASSWORD=<demo-admin-password>`
+
+Notes:
+- The DEMO button is intended for **Supabase mode** (requires `REACT_APP_SUPABASE_URL` and `REACT_APP_SUPABASE_KEY`).
+- In mock mode, the login form is already prefilled with demo credentials.
+
 See `../assets/supabase.md` for suggested table schemas.
