@@ -196,19 +196,29 @@ async function supaGetUserRole(supabase, userId, email) {
 
 async function supaGetProfile(supabase, userId) {
   try {
-    // IMPORTANT: don't select email; schema may not have it.
-    const { data, error } = await supabase.from("profiles").select("id,role,approved,profile,display_name,phone").eq("id", userId).maybeSingle();
+    // IMPORTANT:
+    // - don't select email; schema may not have it.
+    // - don't select `profile`; column does not exist in the canonical schema.
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id,role,approved,display_name,full_name,phone,created_at")
+      .eq("id", userId)
+      .maybeSingle();
+
     if (error) throw error;
+
     if (!data) {
       // Create a default profile row if missing; policies should allow self-insert by id=auth.uid().
       const { data: inserted, error: insertError } = await supabase
         .from("profiles")
         .insert({ id: userId, role: "user", approved: true })
-        .select("id,role,approved,profile,display_name,phone")
+        .select("id,role,approved,display_name,full_name,phone,created_at")
         .maybeSingle();
+
       if (insertError) throw insertError;
       return inserted || null;
     }
+
     return data;
   } catch (e) {
     // Let caller decide how to surface errors.
@@ -434,26 +444,39 @@ export const dataService = {
      *
      * IMPORTANT:
      * - Do not depend on `profiles.email` being present.
+     * - Do not reference `profiles.profile` (non-existent in canonical schema).
      * - Admin RLS is expected to allow selecting all rows.
      */
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      // Select minimal fields + optional display_name.
-      const { data, error } = await supabase.from("profiles").select("id,role,approved,profile,display_name,full_name,phone").order("created_at", { ascending: false });
+      // Select only known columns. Avoid depending on any optional JSON `profile` column.
+      // Also avoid hard failing on ordering by a column that may not exist in older schemas.
+      const { data, error } = await supabase.from("profiles").select("id,role,approved,display_name,full_name,phone,created_at");
       if (error) throw new Error(error.message);
 
-      return (data || []).map((u) => ({
+      const mapped = (data || []).map((u) => ({
         id: u.id,
-        email: bestEffortUserIdentifier(u), // for UI columns expecting email
+        email: bestEffortUserIdentifier(u), // UI shows "Email", but we use best-effort identifier
         role: u.role,
         approved: u.approved,
-        profile: u.profile,
         displayName: u.display_name || u.full_name || null,
         phone: u.phone || null,
+        createdAt: u.created_at || null,
       }));
+
+      // Prefer server-side ordering when available; otherwise do a stable client sort.
+      mapped.sort((a, b) => {
+        const ad = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bd = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (ad !== bd) return bd - ad;
+        return String(a.email).localeCompare(String(b.email));
+      });
+
+      return mapped;
     }
 
+    // Mock mode retains the existing local behavior (it still uses the demo's `profile` object).
     return getLocalUsers().map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
   },
 
