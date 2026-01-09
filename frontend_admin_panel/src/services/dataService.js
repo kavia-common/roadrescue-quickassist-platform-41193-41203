@@ -160,12 +160,32 @@ function setLocalFees(fees) {
   writeJson(LS_KEYS.fees, fees);
 }
 
+/**
+ * Admin panel must not depend on `profiles.email` existing.
+ * Some deployments intentionally omit it, and RLS should not require it for admin reads.
+ *
+ * This helper returns a stable "identifier" string for UI display purposes.
+ */
+function bestEffortUserIdentifier(row) {
+  if (!row) return "unknown";
+  // Prefer email when present, but fall back safely.
+  const email = row.email || row.user_email || row.userEmail || null;
+  if (email) return email;
+  const display = row.display_name || row.displayName || row.full_name || row.fullName || null;
+  if (display) return display;
+  return row.id ? `user:${String(row.id).slice(0, 8)}` : "unknown";
+}
+
 async function supaGetUserRole(supabase, userId, email) {
   try {
+    // IMPORTANT: don't require selecting email here; it may not exist in `profiles`.
     const { data, error } = await supabase.from("profiles").select("role,approved").eq("id", userId).maybeSingle();
     if (error) return { role: "user", approved: true };
     if (!data) {
-      await supabase.from("profiles").insert({ id: userId, email, role: "user", approved: true });
+      // Insert row without relying on an email column.
+      // If an `email` column does exist, inserting it is fine; if not, Postgres will ignore unknown keys? (it won't)
+      // So we only insert the minimal required columns here.
+      await supabase.from("profiles").insert({ id: userId, role: "user", approved: true });
       return { role: "user", approved: true };
     }
     return { role: data.role || "user", approved: data.approved ?? true };
@@ -174,16 +194,17 @@ async function supaGetUserRole(supabase, userId, email) {
   }
 }
 
-async function supaGetProfile(supabase, userId, email) {
+async function supaGetProfile(supabase, userId) {
   try {
-    const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").eq("id", userId).maybeSingle();
+    // IMPORTANT: don't select email; schema may not have it.
+    const { data, error } = await supabase.from("profiles").select("id,role,approved,profile,display_name,phone").eq("id", userId).maybeSingle();
     if (error) throw error;
     if (!data) {
       // Create a default profile row if missing; policies should allow self-insert by id=auth.uid().
       const { data: inserted, error: insertError } = await supabase
         .from("profiles")
-        .insert({ id: userId, email, role: "user", approved: true })
-        .select("id,email,role,approved,profile")
+        .insert({ id: userId, role: "user", approved: true })
+        .select("id,role,approved,profile,display_name,phone")
         .maybeSingle();
       if (insertError) throw insertError;
       return inserted || null;
@@ -255,12 +276,12 @@ export const dataService = {
     // IMPORTANT: Fetch by uid explicitly (not by email) to match RLS policies and the requirement.
     const { data, error } = await supabase
       .from("profiles")
-      .select("id,role,full_name")
+      .select("id,role,full_name,display_name")
       .eq("id", user.id)
       .maybeSingle();
 
     if (error) throw new Error(error.message || "Could not load profile.");
-    return data ? { id: data.id, role: data.role || null, full_name: data.full_name || null } : null;
+    return data ? { id: data.id, role: data.role || null, full_name: data.full_name || data.display_name || null } : null;
   },
 
   // PUBLIC_INTERFACE
@@ -287,18 +308,32 @@ export const dataService = {
     };
 
     if (supabase) {
+      // Prefer the "mechanic portal" schema (`requester_id`, `assigned_mechanic_id`, `submitted_at`, etc).
+      // Fall back to legacy columns if present.
       const insertPayload = {
-        created_at: nowIso,
-        user_id: user.id,
-        user_email: user.email,
+        created_at: nowIso, // legacy (safe if exists)
+        submitted_at: nowIso, // newer schema
+        requester_id: user.id,
+        user_id: user.id, // legacy deployments
+        user_email: user.email, // optional; may exist in some schemas
+
+        // Vehicle: try JSON vehicle, plus allow flat columns if the DB expects those.
         vehicle,
+        vehicle_make: vehicle?.make || null,
+        vehicle_model: vehicle?.model || null,
+        vehicle_year: vehicle?.year ? Number(vehicle.year) : null,
+        vehicle_plate: vehicle?.plate || null,
+
         issue_description: issueDescription,
         contact,
         status: "open",
+
+        mechanic_id: null,
         assigned_mechanic_id: null,
         assigned_mechanic_email: null,
         notes: [],
       };
+
       const { data, error } = await supabase.from("requests").insert(insertPayload).select().maybeSingle();
 
       if (error) throw new Error(error.message);
@@ -306,15 +341,15 @@ export const dataService = {
 
       return {
         id: data.id,
-        createdAt: data.created_at,
-        userId: data.user_id,
-        userEmail: data.user_email,
-        vehicle: data.vehicle,
-        issueDescription: data.issue_description,
-        contact: data.contact,
+        createdAt: data.submitted_at || data.created_at,
+        userId: data.requester_id || data.user_id,
+        userEmail: data.user_email || "",
+        vehicle: data.vehicle || vehicle,
+        issueDescription: data.issue_description || "",
+        contact: data.contact || contact,
         status: data.status,
-        assignedMechanicId: data.assigned_mechanic_id,
-        assignedMechanicEmail: data.assigned_mechanic_email,
+        assignedMechanicId: data.assigned_mechanic_id ?? data.mechanic_id ?? null,
+        assignedMechanicEmail: data.assigned_mechanic_email ?? null,
         notes: data.notes || [],
       };
     }
@@ -394,12 +429,29 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async listUsers() {
+    /**
+     * Admin list of profiles.
+     *
+     * IMPORTANT:
+     * - Do not depend on `profiles.email` being present.
+     * - Admin RLS is expected to allow selecting all rows.
+     */
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").order("email", { ascending: true });
+      // Select minimal fields + optional display_name.
+      const { data, error } = await supabase.from("profiles").select("id,role,approved,profile,display_name,full_name,phone").order("created_at", { ascending: false });
       if (error) throw new Error(error.message);
-      return (data || []).map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
+
+      return (data || []).map((u) => ({
+        id: u.id,
+        email: bestEffortUserIdentifier(u), // for UI columns expecting email
+        role: u.role,
+        approved: u.approved,
+        profile: u.profile,
+        displayName: u.display_name || u.full_name || null,
+        phone: u.phone || null,
+      }));
     }
 
     return getLocalUsers().map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
@@ -437,14 +489,17 @@ export const dataService = {
     /**
      * Lists all requests (admin view).
      *
-     * Supports both:
-     * - Current required Supabase schema (vehicle_make/model/year/plate, address/lat/lon, mechanic_id, status)
-     * - Earlier MVP schema variants (vehicle json, assigned_mechanic_id, etc.)
+     * IMPORTANT:
+     * - Keep this aligned with the mechanic portal normalization so counts match.
+     * - Support both schema variants:
+     *   - newer: requester_id / assigned_mechanic_id / submitted_at, accepted_at...
+     *   - older: user_id / mechanic_id / created_at
      */
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from("requests").select("*").order("created_at", { ascending: false });
+      // Prefer submitted_at ordering; fall back to created_at if it's the only thing available.
+      const { data, error } = await supabase.from("requests").select("*").order("submitted_at", { ascending: false }).order("created_at", { ascending: false });
       if (error) throw new Error(error.message);
 
       return (data || []).map((r) => {
@@ -460,32 +515,47 @@ export const dataService = {
             : { make: "", model: "", year: "", plate: "" });
 
         // Map DB status values to canonical UI tokens.
+        // Mechanic portal expects: open | assigned | in_progress | completed | cancelled
         const dbStatus = String(r.status || "open").toLowerCase();
         const statusToUi = {
+          new: "OPEN",
+          pending: "OPEN",
           open: "OPEN",
           assigned: "ASSIGNED",
+          accepted: "ASSIGNED",
+          arrived: "EN_ROUTE",
           in_progress: "WORKING",
           completed: "COMPLETED",
           cancelled: "CANCELLED",
         };
 
+        // Prefer newer schema columns; fall back to older ones.
+        const requesterId = r.requester_id ?? r.user_id ?? r.userId ?? null;
+        const assignedMechanicId = r.assigned_mechanic_id ?? r.mechanic_id ?? r.assigned_mechanic_id ?? null;
+
+        // IMPORTANT: user email may not exist; present a stable display string instead.
+        const userIdentifier = bestEffortUserIdentifier({
+          id: requesterId,
+          user_email: r.user_email,
+          userEmail: r.userEmail,
+        });
+
         return {
           id: r.id,
-          createdAt: r.created_at,
-          userId: r.user_id,
-          userEmail: r.user_email || r.userEmail || "",
+          createdAt: r.submitted_at || r.created_at || r.createdAt,
+          userId: requesterId,
+          userEmail: userIdentifier,
           vehicle,
           issueDescription: r.issue_description || r.issueDescription || "",
           contact: r.contact || { name: "", phone: "" },
           status: normalizeStatus(statusToUi[dbStatus] || r.status),
-          assignedMechanicId: r.mechanic_id ?? r.assigned_mechanic_id ?? null,
+          assignedMechanicId,
           assignedMechanicEmail: r.assigned_mechanic_email ?? null,
           notes: r.notes || [],
-          // Keep useful admin-only fields if present (ignored by current UI but helpful for future)
           address: r.address || null,
           latitude: r.latitude ?? null,
           longitude: r.longitude ?? null,
-          assignedAt: r.assigned_at || null,
+          assignedAt: r.accepted_at || r.assigned_at || null,
           completedAt: r.completed_at || null,
         };
       });
@@ -516,7 +586,7 @@ export const dataService = {
       const mapping = {
         OPEN: "open",
         ASSIGNED: "assigned",
-        EN_ROUTE: "assigned",
+        EN_ROUTE: "arrived",
         WORKING: "in_progress",
         COMPLETED: "completed",
         CANCELLED: "cancelled",
@@ -528,7 +598,12 @@ export const dataService = {
       const update = {};
 
       if (patch.status !== undefined) update.status = mapUiStatusToDb(patch.status);
-      if (patch.assignedMechanicId !== undefined) update.mechanic_id = patch.assignedMechanicId;
+
+      // Support both schema variants for mechanic assignment.
+      if (patch.assignedMechanicId !== undefined) {
+        update.assigned_mechanic_id = patch.assignedMechanicId;
+        update.mechanic_id = patch.assignedMechanicId;
+      }
       if (patch.assignedMechanicEmail !== undefined) update.assigned_mechanic_email = patch.assignedMechanicEmail;
 
       const { error } = await supabase.from("requests").update(update).eq("id", requestId);
@@ -611,6 +686,6 @@ export const dataService = {
     const user = data?.user;
     if (!user) return null;
 
-    return await supaGetProfile(supabase, user.id, user.email);
+    return await supaGetProfile(supabase, user.id);
   },
 };

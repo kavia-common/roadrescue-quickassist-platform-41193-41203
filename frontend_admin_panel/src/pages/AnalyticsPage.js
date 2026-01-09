@@ -96,7 +96,7 @@ export function AnalyticsPage() {
               { key: "id", header: "Request", render: (r) => r.id.slice(0, 8) },
               { key: "createdAt", header: "Created", render: (r) => new Date(r.createdAt).toLocaleString() },
               { key: "status", header: "Status" },
-              { key: "userEmail", header: "Customer" },
+              { key: "userEmail", header: "Customer (email/id)" },
             ]}
             rows={requests.slice(0, 20)}
             rowKey={(r) => r.id}
