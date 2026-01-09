@@ -148,21 +148,37 @@ async function tryGetAuthEmailById(supabase) {
   }
 }
 
+function isMissingProfilesSchemaError(error) {
+  // Supabase/Postgres common messages:
+  // - relation "profiles" does not exist
+  // - column profiles.approved does not exist
+  // - column approved does not exist
+  const msg = String(error?.message || "").toLowerCase();
+  return msg.includes('relation "profiles" does not exist') || msg.includes("column") && msg.includes("does not exist") && msg.includes("profiles");
+}
+
 async function supaGetUserRole(supabase, userId) {
   try {
     const { data, error } = await supabase.from("profiles").select("role,approved").eq("id", userId).maybeSingle();
-    if (error) return { role: "user", approved: true };
+
+    // If schema is missing, don't hard-fail the app.
+    if (error) {
+      if (isMissingProfilesSchemaError(error)) return { role: "user", approved: true };
+      return { role: "user", approved: true };
+    }
 
     if (!data) {
-      // IMPORTANT:
-      // Some deployments do NOT have `profiles.email` (email is only in `auth.users.email`).
-      // Do not insert unknown columns; only insert what we can safely assume exists.
-      await supabase.from("profiles").insert({ id: userId, role: "user", approved: true });
+      // Best-effort insert only when schema exists.
+      // If columns/table are missing, this would fail and spam errors.
+      const { error: insertError } = await supabase.from("profiles").insert({ id: userId, role: "user", approved: true });
+      if (insertError && !isMissingProfilesSchemaError(insertError)) {
+        // Non-schema failure: still keep UX moving with default role.
+      }
       return { role: "user", approved: true };
     }
 
     return { role: data.role || "user", approved: data.approved ?? true };
-  } catch {
+  } catch (e) {
     return { role: "user", approved: true };
   }
 }
@@ -171,7 +187,11 @@ async function supaGetProfile(supabase, userId) {
   try {
     // IMPORTANT: Avoid selecting `email` from profiles; it may not exist in some schemas.
     const { data, error } = await supabase.from("profiles").select("id,role,approved,profile").eq("id", userId).maybeSingle();
-    if (error) throw error;
+
+    if (error) {
+      if (isMissingProfilesSchemaError(error)) return null;
+      throw error;
+    }
 
     if (!data) {
       // Create a default profile row if missing; policies should allow self-insert by id=auth.uid().
@@ -180,7 +200,11 @@ async function supaGetProfile(supabase, userId) {
         .insert({ id: userId, role: "user", approved: true })
         .select("id,role,approved,profile")
         .maybeSingle();
-      if (insertError) throw insertError;
+
+      if (insertError) {
+        if (isMissingProfilesSchemaError(insertError)) return null;
+        throw insertError;
+      }
       return inserted || null;
     }
 
@@ -255,7 +279,15 @@ export const dataService = {
       .eq("id", user.id)
       .maybeSingle();
 
-    if (error) throw new Error(error.message || "Could not load profile.");
+    if (error) {
+      // If profiles schema isn't ready yet, treat as "no profile" rather than crashing the UI.
+      const msg = String(error?.message || "").toLowerCase();
+      if (msg.includes('relation "profiles" does not exist') || (msg.includes("column") && msg.includes("does not exist"))) {
+        return null;
+      }
+      throw new Error(error.message || "Could not load profile.");
+    }
+
     return data ? { id: data.id, role: data.role || null, full_name: data.full_name || null } : null;
   },
 
@@ -380,7 +412,15 @@ export const dataService = {
       // We order by id for deterministic results, then optionally enrich emails
       // from auth.users via admin API (service role key only).
       const { data, error } = await supabase.from("profiles").select("id,role,approved,profile").order("id", { ascending: true });
-      if (error) throw new Error(error.message);
+
+      if (error) {
+        const msg = String(error?.message || "").toLowerCase();
+        if (msg.includes('relation "profiles" does not exist') || (msg.includes("column") && msg.includes("does not exist"))) {
+          // Schema isn't ready. Return empty list so UI can render (and show error at callsite if desired).
+          return [];
+        }
+        throw new Error(error.message);
+      }
 
       const emailById = await tryGetAuthEmailById(supabase);
 
@@ -404,7 +444,15 @@ export const dataService = {
     const supabase = getSupabase();
     if (supabase) {
       const { error } = await supabase.from("profiles").update({ approved: true, role: "approved_mechanic" }).eq("id", userId);
-      if (error) throw new Error(error.message);
+
+      if (error) {
+        const msg = String(error?.message || "").toLowerCase();
+        if (msg.includes('relation "profiles" does not exist') || (msg.includes("column") && msg.includes("does not exist"))) {
+          throw new Error("Supabase schema missing: please create/upgrade public.profiles (see assets/supabase.md).");
+        }
+        throw new Error(error.message);
+      }
+
       return true;
     }
 

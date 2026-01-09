@@ -14,3 +14,17 @@ Admin-specific usage:
 - approves mechanics (sets `approved=true` and role to `approved_mechanic`)
 - lists/updates requests (status and mechanic assignment)
 - stores fee parameters in `fees` (optional)
+
+## Required `public.profiles` schema
+
+The frontends expect `public.profiles` to include at least:
+
+- `id uuid primary key references auth.users(id)`
+- `role text` (default `user`)
+- `approved boolean` (default `false`)
+- `profile jsonb` (mechanic profile fields like `{ name, serviceArea }`)
+- `full_name text` (optional)
+- `created_at timestamptz`, `updated_at timestamptz`
+
+If you see SQL errors like `column profiles.approved does not exist`, run the migration in:
+`assets/supabase_profiles_migration.sql.md`
