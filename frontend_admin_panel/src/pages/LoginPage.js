@@ -36,50 +36,13 @@ export function LoginPage({ onAuthed }) {
 
   // PUBLIC_INTERFACE
   const signInDemoAdmin = async () => {
+    // This version always sets up a local demo admin session (no Supabase call, no magic link, always works).
     setDemoError("");
     setDemoBusy(true);
     try {
-      // Try Supabase sign-in with demo creds if available, otherwise set local demo session.
-      let demoResult = null;
-      if (dataService.isSupabaseConfigured?.() && dataService.getSupabaseClient?.()) {
-        // Try magic link or (if implemented) passwordless login for admin@roadrescue.demo
-        const supabase = dataService.getSupabaseClient();
-        // Try basic signInWithPassword with a known demo password.
-        // Set the demo admin password here (must match backend pre-seeded demo user if available)
-        const knownDemoPassword = "demoadmin123";
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: "admin@roadrescue.demo",
-          password: knownDemoPassword,
-        });
-        if (error) {
-          // fallback: magic link flow
-          const { error: magicErr } = await supabase.auth.signInWithOtp({
-            email: "admin@roadrescue.demo",
-            options: {
-              shouldCreateUser: false,
-              // redirectTo: process.env.REACT_APP_FRONTEND_URL + "/dashboard"
-            },
-          });
-          if (magicErr)
-            throw new Error(
-              "Unable to sign in to demo. The demo admin Supabase account may not exist, or email magic link couldn't be sent."
-            );
-          demoResult = "Check your email for the demo admin login link.";
-          setDemoError("Demo admin requires magic link (check admin@roadrescue.demo inbox).");
-          setDemoBusy(false);
-          return;
-        }
-        // Success: let flow continue, data.user now present.
-        demoResult = data.user;
-        if (!demoResult) throw new Error("Unexpected error: no demo user session returned.");
-        onAuthed?.({ id: data.user.id, email: data.user.email, role: "admin", approved: true });
-        navigate("/dashboard");
-        setDemoBusy(false);
-        return;
-      }
-      // else use mock/demo mode, fallback to localStorage session
-      await dataService.setDemoAdminSession?.();
-      onAuthed?.({ id: "demo-admin", email: "admin@roadrescue.demo", role: "admin", approved: true });
+      // Set the demo session locally (purely local; no network call, always instant)
+      if (dataService.setDemoAdminSession) dataService.setDemoAdminSession();
+      onAuthed?.({ id: "demo-admin", email: "admin@roadrescue.demo", isDemo: true, role: "admin", approved: true });
       navigate("/dashboard");
     } catch (err) {
       setDemoError(err.message || "Could not sign into demo admin.");

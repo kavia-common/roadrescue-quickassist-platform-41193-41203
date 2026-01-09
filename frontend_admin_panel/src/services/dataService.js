@@ -28,35 +28,43 @@ function writeJson(key, value) {
   window.localStorage.setItem(key, JSON.stringify(value));
 }
 
-// LOCAL DEMO ADMIN SESSION SUPPORT (for demo-only quick login)
 /**
  * PUBLIC_INTERFACE
+ * Demo admin session helpers: These establish a local, persistent demo admin session—for dev/demo use ONLY.
  */
-function setDemoAdminSession() {
-  // Sets a fake session in localStorage, mimicking Supabase session shape only for dev/demo usage.
+
+// PUBLIC_INTERFACE
+export function setDemoAdminSession() {
+  /** Creates a persistent demo admin session (local-only, no real auth). */
   window.localStorage.setItem(
     LS_KEYS.demoAdmin,
     JSON.stringify({
       user: {
         id: "demo-admin",
         email: "admin@roadrescue.demo",
+        isDemo: true,
         role: "admin",
         approved: true,
       },
       createdAt: Date.now(),
+      isDemo: true,
     })
   );
 }
-function getDemoAdminSession() {
+
+// PUBLIC_INTERFACE
+export function getDemoAdminSession() {
+  /** Reads the demo admin session object from storage (if present and valid). */
   try {
     const s = window.localStorage.getItem(LS_KEYS.demoAdmin);
     if (!s) return null;
     const obj = JSON.parse(s);
+    // Accept session only if correct email and isDemo is true.
     if (
       obj &&
       obj.user &&
       obj.user.email === "admin@roadrescue.demo" &&
-      obj.user.role === "admin"
+      (obj.user.isDemo === true || obj.isDemo === true)
     ) {
       return obj;
     }
@@ -65,7 +73,10 @@ function getDemoAdminSession() {
     return null;
   }
 }
-function clearDemoAdminSession() {
+
+// PUBLIC_INTERFACE
+export function clearDemoAdminSession() {
+  /** Removes the demo admin session from storage. */
   window.localStorage.removeItem(LS_KEYS.demoAdmin);
 }
 

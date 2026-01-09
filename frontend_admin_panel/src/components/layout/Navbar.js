@@ -1,7 +1,7 @@
 import React from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { Button } from "../ui/Button";
-import { dataService } from "../../services/dataService";
+import { dataService, clearDemoAdminSession } from "../../services/dataService";
 
 // PUBLIC_INTERFACE
 export function Navbar({ user }) {
@@ -9,7 +9,9 @@ export function Navbar({ user }) {
   const navigate = useNavigate();
 
   const onLogout = async () => {
-    await dataService.logout();
+    // Ensure demo session always cleared out, regardless of auth mode.
+    if (typeof clearDemoAdminSession === "function") clearDemoAdminSession();
+    if (dataService.logout) await dataService.logout();
     navigate("/login");
   };
 
