@@ -45,6 +45,8 @@ export function RequestManagementPage() {
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
 
+  const [toast, setToast] = useState({ open: false, type: "info", message: "" }); // type: success|error|info
+
   const [statusById, setStatusById] = useState({});
   const [assignById, setAssignById] = useState({}); // mechanic id
 
@@ -52,6 +54,11 @@ export function RequestManagementPage() {
     () => users.filter((u) => u.role === "approved_mechanic" || (u.role === "mechanic" && u.approved)),
     [users]
   );
+
+  const showToast = (type, message) => {
+    setToast({ open: true, type, message });
+    window.setTimeout(() => setToast((t) => ({ ...t, open: false })), 2500);
+  };
 
   const load = async () => {
     setError("");
@@ -82,7 +89,7 @@ export function RequestManagementPage() {
     setBusyId(req.id);
     setError("");
     try {
-      const newStatus = statusById[req.id];
+      const newStatus = normalizeStatus(statusById[req.id] || req.status);
       const newMechId = assignById[req.id] || null;
       const mech = mechanics.find((m) => m.id === newMechId) || null;
 
@@ -91,9 +98,12 @@ export function RequestManagementPage() {
         assignedMechanicId: newMechId,
         assignedMechanicEmail: mech ? mech.email : null,
       });
+
+      showToast("success", `Saved request ${req.id.slice(0, 8)}.`);
       await load();
     } catch (e) {
       setError(e.message || "Could not update request.");
+      showToast("error", e.message || "Could not update request.");
     } finally {
       setBusyId("");
     }
@@ -103,17 +113,45 @@ export function RequestManagementPage() {
     setBusyId(req.id);
     setError("");
     try {
-      await dataService.updateRequest(req.id, { status: "Completed" });
+      await dataService.updateRequest(req.id, { status: "COMPLETED" });
+      showToast("success", `Closed request ${req.id.slice(0, 8)} (Completed).`);
       await load();
     } catch (e) {
       setError(e.message || "Could not close request.");
+      showToast("error", e.message || "Could not close request.");
     } finally {
       setBusyId("");
     }
   };
 
+  const toastClass =
+    toast.type === "success"
+      ? "alert alert-info"
+      : toast.type === "error"
+        ? "alert alert-error"
+        : "alert alert-info";
+
   return (
     <div className="container">
+      {/* lightweight toast (no new deps) */}
+      {toast.open ? (
+        <div
+          style={{
+            position: "fixed",
+            top: 16,
+            right: 16,
+            zIndex: 1000,
+            width: "min(420px, calc(100% - 32px))",
+            boxShadow: "var(--shadow)",
+          }}
+          className={toastClass}
+          role="status"
+          aria-live="polite"
+        >
+          {toast.message}
+        </div>
+      ) : null}
+
       <div className="hero">
         <h1 className="h1">Request Management</h1>
         <p className="lead">Reassign requests, change status, or close cases.</p>
