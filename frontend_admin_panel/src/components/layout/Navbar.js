@@ -1,15 +1,18 @@
 import React from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { Button } from "../ui/Button";
-import { dataService } from "../../services/dataService";
+import { useAuth } from "../../auth/AuthContext";
 
 // PUBLIC_INTERFACE
-export function Navbar({ user }) {
-  /** Admin panel navigation. */
+export function Navbar() {
+  /** Admin panel navigation (DEMO auth mode). */
   const navigate = useNavigate();
+  const { isAuthenticated, role, logout } = useAuth();
 
-  const onLogout = async () => {
-    await dataService.logout();
+  const isAdmin = isAuthenticated && role === "admin";
+
+  const onLogout = () => {
+    logout();
     navigate("/login");
   };
 
@@ -21,7 +24,7 @@ export function Navbar({ user }) {
         </Link>
 
         <nav className="navlinks" aria-label="Primary navigation">
-          {user ? (
+          {isAdmin ? (
             <>
               <NavLink to="/dashboard" className={({ isActive }) => (isActive ? "navlink active" : "navlink")}>
                 Dashboard
@@ -46,7 +49,7 @@ export function Navbar({ user }) {
         </nav>
 
         <div className="nav-right">
-          {user ? (
+          {isAdmin ? (
             <>
               <span className="chip">Admin</span>
               <Button variant="ghost" onClick={onLogout}>

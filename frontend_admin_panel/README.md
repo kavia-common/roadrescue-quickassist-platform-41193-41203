@@ -18,6 +18,6 @@ This app supports two modes:
 1. **Supabase mode**: if `REACT_APP_SUPABASE_URL` and `REACT_APP_SUPABASE_KEY` are set, auth uses `supabase.auth` and persistence uses Supabase tables.
 2. **Mock mode**: otherwise uses `localStorage` with seeded demo data.
 
-Demo admin (mock mode): `admin@example.com` / `password123`
+Demo admin (DEMO ONLY hardcoded): `admin@demo.local` / `demo1234`
 
 See `../assets/supabase.md` for suggested table schemas.
