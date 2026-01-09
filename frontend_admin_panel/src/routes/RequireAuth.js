@@ -50,67 +50,15 @@ function shouldShowDebugPanel() {
   return nodeEnv !== "production" && appEnv !== "production";
 }
 
-function AdminDebugPanel({ state }) {
-  const visible = shouldShowDebugPanel();
-  if (!visible) return null;
-
-  const panelStyle = {
-    position: "fixed",
-    right: 12,
-    bottom: 12,
-    zIndex: 9999,
-    width: 340,
-    maxWidth: "calc(100vw - 24px)",
-    borderRadius: 12,
-    border: "1px solid rgba(239,68,68,0.30)",
-    background: "rgba(17,24,39,0.92)",
-    color: "#fff",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.25)",
-    padding: "10px 12px",
-    fontSize: 12,
-    lineHeight: 1.35,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-  };
-
-  const rowStyle = { display: "flex", justifyContent: "space-between", gap: 12, marginTop: 6 };
-  const labelStyle = { color: "rgba(255,255,255,0.75)" };
-  const valStyle = { fontWeight: 900, wordBreak: "break-all", textAlign: "right" };
-
-  return (
-    <aside aria-label="Admin auth debug panel" style={panelStyle}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-        <div style={{ fontWeight: 1000, letterSpacing: "0.02em" }}>[Admin Debug]</div>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)" }}>dev-only</div>
-      </div>
-
-      <div style={rowStyle}>
-        <div style={labelStyle}>uid</div>
-        <div style={valStyle}>{state.uid ?? "null"}</div>
-      </div>
-      <div style={rowStyle}>
-        <div style={labelStyle}>role</div>
-        <div style={valStyle}>{state.role ?? "unknown"}</div>
-      </div>
-      <div style={rowStyle}>
-        <div style={labelStyle}>loading</div>
-        <div style={valStyle}>{String(Boolean(state.loading))}</div>
-      </div>
-      <div style={rowStyle}>
-        <div style={labelStyle}>decision</div>
-        <div style={valStyle}>{state.decision ?? "deny"}</div>
-      </div>
-
-      {state.note ? (
-        <div style={{ marginTop: 8, color: "rgba(255,255,255,0.75)" }}>
-          <span style={{ fontWeight: 900 }}>note:</span> {state.note}
-        </div>
-      ) : null}
-
-      <div style={{ marginTop: 8, color: "rgba(255,255,255,0.55)" }}>
-        Console helper: <span style={{ color: "#fff", fontWeight: 900 }}>window.__ADMIN_DEBUG()</span>
-      </div>
-    </aside>
-  );
+function AdminDebugPanel() {
+  /**
+   * On-screen Admin Debug UI has been intentionally disabled.
+   *
+   * We keep the console helper `window.__ADMIN_DEBUG()` (set up in RequireAuth)
+   * so developers can still inspect auth state without showing any debug banners
+   * or panels in demo/production.
+   */
+  return null;
 }
 
 // PUBLIC_INTERFACE
