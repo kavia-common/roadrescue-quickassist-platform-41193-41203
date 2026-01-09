@@ -709,18 +709,21 @@ export const dataService = {
       // IMPORTANT (Supabase/PostgREST `.or()` syntax):
       // - Use a SINGLE `.or()` call containing comma-separated expressions.
       // - Do NOT wrap expressions in parentheses.
-      // - Use plain column names for the embedded `request:requests(...)` resource (no `request.` prefixes).
+      // - Use plain column names (no `request.` prefixes / no table prefixes).
       //
       // Ref: PostgREST `or` filter expects: "col.op.value,col.op.value"
       if (q) {
         const like = `%${q}%`;
         query = query.or(
           [
+            // Request + vehicle details
             `vehicle_make.ilike.${like}`,
             `vehicle_model.ilike.${like}`,
             `vehicle_plate.ilike.${like}`,
             `issue_description.ilike.${like}`,
             `address.ilike.${like}`,
+
+            // Optional emails (may exist in some schemas; safe to include when selected)
             `user_email.ilike.${like}`,
             `assigned_mechanic_email.ilike.${like}`,
           ].join(",")
