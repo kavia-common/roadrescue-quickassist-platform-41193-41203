@@ -4,8 +4,8 @@ import { Table } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
 import { dataService } from "../services/dataService";
 
-function roleLabel(role) {
-  if (role === "approved_mechanic") return "mechanic (approved)";
+function roleLabel(role, approved) {
+  if (role === "mechanic") return approved ? "mechanic (approved)" : "mechanic (pending)";
   return role;
 }
 
@@ -54,16 +54,20 @@ export function UserManagementPage() {
         <Table
           columns={[
             { key: "email", header: "Email" },
-            { key: "role", header: "Role", render: (r) => roleLabel(r.role) },
+            { key: "role", header: "Role", render: (r) => roleLabel(r.role, r.approved) },
             { key: "approved", header: "Approved", render: (r) => (r.approved ? "Yes" : "No") },
             {
               key: "action",
               header: "Action",
               render: (r) =>
-                (r.role === "mechanic" && !r.approved) ? (
-                  <Button size="sm" onClick={() => approve(r.id)} disabled={busyId === r.id}>
-                    {busyId === r.id ? "Approving..." : "Approve"}
-                  </Button>
+                ((r.role === "mechanic" && !r.approved) || r.role === "approved_mechanic") ? (
+                  r.role === "approved_mechanic" ? (
+                    <span style={{ color: "var(--muted)", fontWeight: 800 }}>Already approved</span>
+                  ) : (
+                    <Button size="sm" onClick={() => approve(r.id)} disabled={busyId === r.id}>
+                      {busyId === r.id ? "Approving..." : "Approve"}
+                    </Button>
+                  )
                 ) : (
                   <span style={{ color: "var(--muted)", fontWeight: 800 }}>—</span>
                 ),

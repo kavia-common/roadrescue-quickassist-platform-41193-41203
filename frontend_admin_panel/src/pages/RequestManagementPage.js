@@ -6,7 +6,7 @@ import { Input } from "../components/ui/Input";
 import { dataService } from "../services/dataService";
 import { normalizeStatus, statusLabel } from "../services/statusUtils";
 
-const STATUS_OPTIONS = ["OPEN", "ASSIGNED", "EN_ROUTE", "WORKING", "COMPLETED"];
+const STATUS_OPTIONS = ["OPEN", "ASSIGNED", "EN_ROUTE", "WORKING", "COMPLETED", "CANCELLED"];
 
 function statusPill(status) {
   const canonical = normalizeStatus(status);
@@ -103,7 +103,7 @@ export function RequestManagementPage() {
     setBusyId(req.id);
     setError("");
     try {
-      await dataService.updateRequest(req.id, { status: "Completed" });
+      await dataService.updateRequest(req.id, { status: "COMPLETED" });
       await load();
     } catch (e) {
       setError(e.message || "Could not close request.");

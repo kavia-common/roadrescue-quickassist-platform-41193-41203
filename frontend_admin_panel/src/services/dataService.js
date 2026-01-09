@@ -407,10 +407,19 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async approveMechanic(userId) {
+    /**
+     * Approves a mechanic account.
+     *
+     * Supabase schema expectation (per requirements/RLS docs):
+     * - `profiles.role` remains 'mechanic'
+     * - `profiles.approved` becomes true
+     *
+     * Mock mode keeps the existing local behavior but aligns role value to 'mechanic'.
+     */
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { error } = await supabase.from("profiles").update({ approved: true, role: "approved_mechanic" }).eq("id", userId);
+      const { error } = await supabase.from("profiles").update({ approved: true, role: "mechanic" }).eq("id", userId);
       if (error) throw new Error(error.message);
       return true;
     }
@@ -418,31 +427,68 @@ export const dataService = {
     const users = getLocalUsers();
     const idx = users.findIndex((u) => u.id === userId);
     if (idx < 0) throw new Error("User not found.");
-    users[idx] = { ...users[idx], approved: true, role: "approved_mechanic" };
+    users[idx] = { ...users[idx], approved: true, role: "mechanic" };
     setLocalUsers(users);
     return true;
   },
 
   // PUBLIC_INTERFACE
   async listRequests() {
+    /**
+     * Lists all requests (admin view).
+     *
+     * Supports both:
+     * - Current required Supabase schema (vehicle_make/model/year/plate, address/lat/lon, mechanic_id, status)
+     * - Earlier MVP schema variants (vehicle json, assigned_mechanic_id, etc.)
+     */
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
       const { data, error } = await supabase.from("requests").select("*").order("created_at", { ascending: false });
       if (error) throw new Error(error.message);
-      return (data || []).map((r) => ({
-        id: r.id,
-        createdAt: r.created_at,
-        userId: r.user_id,
-        userEmail: r.user_email,
-        vehicle: r.vehicle,
-        issueDescription: r.issue_description,
-        contact: r.contact,
-        status: normalizeStatus(r.status),
-        assignedMechanicId: r.assigned_mechanic_id,
-        assignedMechanicEmail: r.assigned_mechanic_email,
-        notes: r.notes || [],
-      }));
+
+      return (data || []).map((r) => {
+        const vehicle =
+          r.vehicle ||
+          (r.vehicle_make || r.vehicle_model || r.vehicle_year || r.vehicle_plate
+            ? {
+                make: r.vehicle_make || "",
+                model: r.vehicle_model || "",
+                year: r.vehicle_year != null ? String(r.vehicle_year) : "",
+                plate: r.vehicle_plate || "",
+              }
+            : { make: "", model: "", year: "", plate: "" });
+
+        // Map DB status values to canonical UI tokens.
+        const dbStatus = String(r.status || "open").toLowerCase();
+        const statusToUi = {
+          open: "OPEN",
+          assigned: "ASSIGNED",
+          in_progress: "WORKING",
+          completed: "COMPLETED",
+          cancelled: "CANCELLED",
+        };
+
+        return {
+          id: r.id,
+          createdAt: r.created_at,
+          userId: r.user_id,
+          userEmail: r.user_email || r.userEmail || "",
+          vehicle,
+          issueDescription: r.issue_description || r.issueDescription || "",
+          contact: r.contact || { name: "", phone: "" },
+          status: normalizeStatus(statusToUi[dbStatus] || r.status),
+          assignedMechanicId: r.mechanic_id ?? r.assigned_mechanic_id ?? null,
+          assignedMechanicEmail: r.assigned_mechanic_email ?? null,
+          notes: r.notes || [],
+          // Keep useful admin-only fields if present (ignored by current UI but helpful for future)
+          address: r.address || null,
+          latitude: r.latitude ?? null,
+          longitude: r.longitude ?? null,
+          assignedAt: r.assigned_at || null,
+          completedAt: r.completed_at || null,
+        };
+      });
     }
 
     return getLocalRequests()
@@ -453,13 +499,38 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async updateRequest(requestId, patch) {
+    /**
+     * Admin updates an existing request.
+     *
+     * IMPORTANT:
+     * - Supabase expects `requests.status` as: open | assigned | in_progress | completed | cancelled
+     * - UI uses canonical tokens: OPEN | ASSIGNED | EN_ROUTE | WORKING | COMPLETED
+     * This function accepts either and writes the correct DB value.
+     */
     ensureSeedData();
     const supabase = getSupabase();
+
+    const mapUiStatusToDb = (raw) => {
+      if (raw === undefined || raw === null) return undefined;
+      const s = normalizeStatus(raw);
+      const mapping = {
+        OPEN: "open",
+        ASSIGNED: "assigned",
+        EN_ROUTE: "assigned",
+        WORKING: "in_progress",
+        COMPLETED: "completed",
+        CANCELLED: "cancelled",
+      };
+      return mapping[s] || String(raw).toLowerCase();
+    };
+
     if (supabase) {
       const update = {};
-      if (patch.status !== undefined) update.status = patch.status;
-      if (patch.assignedMechanicId !== undefined) update.assigned_mechanic_id = patch.assignedMechanicId;
+
+      if (patch.status !== undefined) update.status = mapUiStatusToDb(patch.status);
+      if (patch.assignedMechanicId !== undefined) update.mechanic_id = patch.assignedMechanicId;
       if (patch.assignedMechanicEmail !== undefined) update.assigned_mechanic_email = patch.assignedMechanicEmail;
+
       const { error } = await supabase.from("requests").update(update).eq("id", requestId);
       if (error) throw new Error(error.message);
       return true;
