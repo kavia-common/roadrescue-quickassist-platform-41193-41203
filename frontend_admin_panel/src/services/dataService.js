@@ -603,17 +603,19 @@ export const dataService = {
     /**
      * Fetches a bounded set of requests for analytics with server-side filtering when possible.
      *
-     * IMPORTANT (analytics assignment source):
-     * - Do NOT rely on `requests.mechanic_id` (deprecated in current schema expectations for analytics).
-     * - Derive mechanic assignment from `assignments.mechanic_id` joined/linked via `assignments.request_id`.
+     * Fixes:
+     * - Avoid table/alias-prefixed columns that PostgREST can rewrite into `requests_1.*` and fail.
+     * - Select latitude/longitude from the correct source (public.requests).
+     * - Use a SINGLE `.or()` filter with plain column names (no table prefixes).
+     * - Use a single timestamp column for time filtering (`created_at`) to avoid OR-group interactions.
      *
-     * Filters supported (using existing schema fields only):
-     * - Time range: uses `submitted_at` when present, otherwise `created_at`
-     * - Status: uses `requests.status` (db values: open|assigned|in_progress|completed|cancelled)
-     * - Assigned: based on presence/absence of an `assignments` row with `mechanic_id`
-     * - Search: best-effort across request id, vehicle fields, and address
+     * Filters supported:
+     * - Time range: uses `created_at` only (single timestamp field)
+     * - Status: uses `requests.status` (db values: open|assigned|in_progress|completed|cancelled|arrived)
+     * - Assigned: uses presence/absence of `assigned_mechanic_id` (and legacy `mechanic_id`)
+     * - Search: best-effort across request fields (vehicle/address/description/emails)
      *
-     * Returns normalized request rows in the same shape as listRequests(), but typically fewer rows.
+     * Returns normalized request rows in a similar shape to listRequests().
      */
     ensureSeedData();
 
@@ -651,90 +653,6 @@ export const dataService = {
 
     const supabase = getSupabase();
     if (supabase) {
-      /**
-       * We query `assignments` first (it has the authoritative `mechanic_id`),
-       * and select the related request via `assignments.request_id -> requests(*)`.
-       *
-       * NOTE: This requires a FK relationship in PostgREST so `request:requests(...)` works.
-       * If a deployment lacks that FK/introspection, this will fail; we surface the error.
-       */
-      let query = supabase
-        .from("assignments")
-        .select(
-          [
-            "id",
-            "request_id",
-            "mechanic_id",
-            "created_at",
-            "updated_at",
-            // Nested request payload (only the fields we need for analytics + table)
-            "request:requests(id,status,submitted_at,created_at,requester_id,user_id,user_email,assigned_mechanic_email,vehicle,vehicle_make,vehicle_model,vehicle_year,vehicle_plate,issue_description,address,latitude,longitude,accepted_at,assigned_at,completed_at)",
-          ].join(",")
-        )
-        .order("created_at", { ascending: false })
-        .limit(clampLimit);
-
-      // Time range:
-      // IMPORTANT: Avoid chaining multiple `.or()` calls because each `.or()` adds a new OR group
-      // at the top-level, which can accidentally OR *all* filters together.
-      //
-      // To keep logic correct and simple, analytics uses a single timestamp field for filtering.
-      // We prefer `requests.created_at` as the canonical filter column here.
-      if (fromIso) {
-        query = query.gte("request.created_at", fromIso);
-      }
-      if (toIso) {
-        query = query.lte("request.created_at", toIso);
-      }
-
-      // Status filter (lowercase db tokens).
-      if (status && status !== "ALL") {
-        const dbStatus = String(status).toLowerCase();
-        query = query.eq("request.status", dbStatus);
-      }
-
-      // Assigned filter: because `assignments` rows are inherently "assigned",
-      // we only support ASSIGNED vs ALL in Supabase mode here.
-      // (UNASSIGNED requests require an additional request-only query; we handle it by a lightweight second query below.)
-      if (assigned && assigned !== "ALL") {
-        if (assigned === "ASSIGNED") {
-          // already true for assignments
-        } else if (assigned === "UNASSIGNED") {
-          // handled below by querying requests without a matching assignment row
-        }
-      }
-
-      // Search filter: best-effort on nested request fields.
-      //
-      // IMPORTANT (Supabase/PostgREST `.or()` syntax):
-      // - Use a SINGLE `.or()` call containing comma-separated expressions.
-      // - Do NOT wrap expressions in parentheses.
-      // - Use plain column names (no `request.` prefixes / no table prefixes).
-      //
-      // Ref: PostgREST `or` filter expects: "col.op.value,col.op.value"
-      if (q) {
-        const like = `%${q}%`;
-        query = query.or(
-          [
-            // Request + vehicle details
-            `vehicle_make.ilike.${like}`,
-            `vehicle_model.ilike.${like}`,
-            `vehicle_plate.ilike.${like}`,
-            `issue_description.ilike.${like}`,
-            `address.ilike.${like}`,
-
-            // Optional emails (may exist in some schemas; safe to include when selected)
-            `user_email.ilike.${like}`,
-            `assigned_mechanic_email.ilike.${like}`,
-          ].join(",")
-        );
-      }
-
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
-
-      const assignmentRows = data || [];
-
       const statusToUi = (rawDbStatus) => {
         const dbStatus = String(rawDbStatus || "open").toLowerCase();
         const map = {
@@ -751,201 +669,119 @@ export const dataService = {
         return map[dbStatus] || rawDbStatus;
       };
 
-      const mappedAssigned = assignmentRows
-        .map((a) => {
-          const r = a.request || null;
-          if (!r) return null;
+      /**
+       * Query `requests` directly so latitude/longitude come from the correct table,
+       * and to avoid PostgREST aliasing from embedded joins (e.g., `requests_1.latitude`).
+       */
+      let query = supabase
+        .from("requests")
+        .select(
+          [
+            "id",
+            "status",
+            "submitted_at",
+            "created_at",
+            "requester_id",
+            "user_id",
+            "user_email",
+            "assigned_mechanic_id",
+            "mechanic_id",
+            "assigned_mechanic_email",
+            "vehicle",
+            "vehicle_make",
+            "vehicle_model",
+            "vehicle_year",
+            "vehicle_plate",
+            "issue_description",
+            "address",
+            "latitude",
+            "longitude",
+            "accepted_at",
+            "assigned_at",
+            "completed_at",
+            "contact",
+            "notes",
+          ].join(",")
+        )
+        .order("created_at", { ascending: false })
+        .limit(clampLimit);
 
-          const vehicle =
-            r.vehicle ||
-            (r.vehicle_make || r.vehicle_model || r.vehicle_year || r.vehicle_plate
-              ? {
-                  make: r.vehicle_make || "",
-                  model: r.vehicle_model || "",
-                  year: r.vehicle_year != null ? String(r.vehicle_year) : "",
-                  plate: r.vehicle_plate || "",
-                }
-              : { make: "", model: "", year: "", plate: "" });
+      // Time range: single timestamp column only.
+      if (fromIso) query = query.gte("created_at", fromIso);
+      if (toIso) query = query.lte("created_at", toIso);
 
-          const requesterId = r.requester_id ?? r.user_id ?? r.userId ?? null;
-
-          const userIdentifier = bestEffortUserIdentifier({
-            id: requesterId,
-            user_email: r.user_email,
-            userEmail: r.userEmail,
-          });
-
-          return {
-            id: r.id,
-            createdAt: r.submitted_at || r.created_at || r.createdAt,
-            userId: requesterId,
-            userEmail: userIdentifier,
-            vehicle,
-            issueDescription: r.issue_description || r.issueDescription || "",
-            contact: r.contact || { name: "", phone: "" },
-            status: normalizeStatus(statusToUi(r.status)),
-            // IMPORTANT: assignment derived from assignments.mechanic_id
-            assignedMechanicId: a.mechanic_id ?? null,
-            assignedMechanicEmail: r.assigned_mechanic_email ?? null,
-            notes: r.notes || [],
-            address: r.address || null,
-            latitude: r.latitude ?? null,
-            longitude: r.longitude ?? null,
-            assignedAt: r.accepted_at || r.assigned_at || null,
-            completedAt: r.completed_at || null,
-          };
-        })
-        .filter(Boolean);
-
-      // If UNASSIGNED requested, we need requests with no assignment row.
-      if (assigned === "UNASSIGNED") {
-        // Query requests and exclude ids we already saw in assignments.
-        const assignedIds = new Set(mappedAssigned.map((r) => r.id));
-        let rq = supabase
-          .from("requests")
-          .select(
-            [
-              "id",
-              "status",
-              "submitted_at",
-              "created_at",
-              "requester_id",
-              "user_id",
-              "user_email",
-              "assigned_mechanic_email",
-              "vehicle",
-              "vehicle_make",
-              "vehicle_model",
-              "vehicle_year",
-              "vehicle_plate",
-              "issue_description",
-              "address",
-              "latitude",
-              "longitude",
-              "accepted_at",
-              "assigned_at",
-              "completed_at",
-            ].join(",")
-          )
-          .order("submitted_at", { ascending: false })
-          .order("created_at", { ascending: false })
-          .limit(clampLimit);
-
-        // Time range:
-        // Use a single column to avoid OR-grouping issues with other filters.
-        if (fromIso) rq = rq.gte("created_at", fromIso);
-        if (toIso) rq = rq.lte("created_at", toIso);
-
-        if (status && status !== "ALL") {
-          rq = rq.eq("status", String(status).toLowerCase());
-        }
-
-        if (q) {
-          const like = `%${q}%`;
-          rq = rq.or(
-            [
-              `vehicle_make.ilike.${like}`,
-              `vehicle_model.ilike.${like}`,
-              `vehicle_plate.ilike.${like}`,
-              `issue_description.ilike.${like}`,
-              `address.ilike.${like}`,
-              `user_email.ilike.${like}`,
-              `assigned_mechanic_email.ilike.${like}`,
-            ].join(",")
-          );
-        }
-
-        const { data: rqData, error: rqErr } = await rq;
-        if (rqErr) throw new Error(rqErr.message);
-
-        const mappedUnassigned = (rqData || [])
-          .filter((r) => !assignedIds.has(r.id))
-          .map((r) => {
-            const vehicle =
-              r.vehicle ||
-              (r.vehicle_make || r.vehicle_model || r.vehicle_year || r.vehicle_plate
-                ? {
-                    make: r.vehicle_make || "",
-                    model: r.vehicle_model || "",
-                    year: r.vehicle_year != null ? String(r.vehicle_year) : "",
-                    plate: r.vehicle_plate || "",
-                  }
-                : { make: "", model: "", year: "", plate: "" });
-
-            const requesterId = r.requester_id ?? r.user_id ?? r.userId ?? null;
-
-            const userIdentifier = bestEffortUserIdentifier({
-              id: requesterId,
-              user_email: r.user_email,
-              userEmail: r.userEmail,
-            });
-
-            return {
-              id: r.id,
-              createdAt: r.submitted_at || r.created_at || r.createdAt,
-              userId: requesterId,
-              userEmail: userIdentifier,
-              vehicle,
-              issueDescription: r.issue_description || r.issueDescription || "",
-              contact: r.contact || { name: "", phone: "" },
-              status: normalizeStatus(statusToUi(r.status)),
-              assignedMechanicId: null,
-              assignedMechanicEmail: r.assigned_mechanic_email ?? null,
-              notes: r.notes || [],
-              address: r.address || null,
-              latitude: r.latitude ?? null,
-              longitude: r.longitude ?? null,
-              assignedAt: r.accepted_at || r.assigned_at || null,
-              completedAt: r.completed_at || null,
-            };
-          });
-
-        // Client-side id search pass (same reason as before).
-        const merged = mappedUnassigned;
-        const finalUnassigned = q
-          ? merged.filter((r) => {
-              const hay = [
-                r.id,
-                r.userEmail,
-                r.status,
-                r.vehicle?.make,
-                r.vehicle?.model,
-                r.vehicle?.plate,
-                r.issueDescription,
-                r.address,
-              ]
-                .filter(Boolean)
-                .join(" ")
-                .toLowerCase();
-              return hay.includes(q);
-            })
-          : merged;
-
-        return finalUnassigned;
+      // Status (DB token)
+      if (status && status !== "ALL") {
+        query = query.eq("status", String(status).toLowerCase());
       }
 
-      // For ALL/ASSIGNED: return mappedAssigned; for ALL we still return only rows with assignments in this implementation.
-      // (Existing UI KPIs are still valid, and request activity table shows the latest rows tied to assignments.)
-      const final = q
-        ? mappedAssigned.filter((r) => {
-            const hay = [
-              r.id,
-              r.userEmail,
-              r.status,
-              r.vehicle?.make,
-              r.vehicle?.model,
-              r.vehicle?.plate,
-              r.issueDescription,
-              r.address,
-            ]
-              .filter(Boolean)
-              .join(" ")
-              .toLowerCase();
-            return hay.includes(q);
-          })
-        : mappedAssigned;
+      // Assigned filter: assigned_mechanic_id (new) OR mechanic_id (legacy)
+      if (assigned && assigned !== "ALL") {
+        if (assigned === "ASSIGNED") {
+          query = query.or("assigned_mechanic_id.not.is.null,mechanic_id.not.is.null");
+        } else if (assigned === "UNASSIGNED") {
+          query = query.or("assigned_mechanic_id.is.null,mechanic_id.is.null");
+        }
+      }
 
-      return final;
+      // Search: SINGLE `.or()` with plain column names (no table prefixes).
+      if (q) {
+        const like = `%${q}%`;
+        query = query.or(
+          [
+            `vehicle_make.ilike.${like}`,
+            `vehicle_model.ilike.${like}`,
+            `vehicle_plate.ilike.${like}`,
+            `issue_description.ilike.${like}`,
+            `address.ilike.${like}`,
+            `user_email.ilike.${like}`,
+            `assigned_mechanic_email.ilike.${like}`,
+          ].join(",")
+        );
+      }
+
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+
+      return (data || []).map((r) => {
+        const vehicle =
+          r.vehicle ||
+          (r.vehicle_make || r.vehicle_model || r.vehicle_year || r.vehicle_plate
+            ? {
+                make: r.vehicle_make || "",
+                model: r.vehicle_model || "",
+                year: r.vehicle_year != null ? String(r.vehicle_year) : "",
+                plate: r.vehicle_plate || "",
+              }
+            : { make: "", model: "", year: "", plate: "" });
+
+        const requesterId = r.requester_id ?? r.user_id ?? r.userId ?? null;
+
+        const userIdentifier = bestEffortUserIdentifier({
+          id: requesterId,
+          user_email: r.user_email,
+          userEmail: r.userEmail,
+        });
+
+        return {
+          id: r.id,
+          createdAt: r.submitted_at || r.created_at || r.createdAt,
+          userId: requesterId,
+          userEmail: userIdentifier,
+          vehicle,
+          issueDescription: r.issue_description || r.issueDescription || "",
+          contact: r.contact || { name: "", phone: "" },
+          status: normalizeStatus(statusToUi(r.status)),
+          assignedMechanicId: r.assigned_mechanic_id ?? r.mechanic_id ?? null,
+          assignedMechanicEmail: r.assigned_mechanic_email ?? null,
+          notes: r.notes || [],
+          address: r.address || null,
+          latitude: r.latitude ?? null,
+          longitude: r.longitude ?? null,
+          assignedAt: r.accepted_at || r.assigned_at || null,
+          completedAt: r.completed_at || null,
+        };
+      });
     }
 
     // Mock mode: reuse listRequests() then filter locally.
