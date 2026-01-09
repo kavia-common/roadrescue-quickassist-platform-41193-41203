@@ -7,6 +7,7 @@ const LS_KEYS = {
   requests: "rrqa.requests",
   fees: "rrqa.fees",
   seeded: "rrqa.seeded",
+  demoAdmin: "rrqa.demo_admin", // localStorage flag for demo session
 };
 
 function uid(prefix = "id") {
@@ -25,6 +26,47 @@ function readJson(key, fallback) {
 
 function writeJson(key, value) {
   window.localStorage.setItem(key, JSON.stringify(value));
+}
+
+// LOCAL DEMO ADMIN SESSION SUPPORT (for demo-only quick login)
+/**
+ * PUBLIC_INTERFACE
+ */
+function setDemoAdminSession() {
+  // Sets a fake session in localStorage, mimicking Supabase session shape only for dev/demo usage.
+  window.localStorage.setItem(
+    LS_KEYS.demoAdmin,
+    JSON.stringify({
+      user: {
+        id: "demo-admin",
+        email: "admin@roadrescue.demo",
+        role: "admin",
+        approved: true,
+      },
+      createdAt: Date.now(),
+    })
+  );
+}
+function getDemoAdminSession() {
+  try {
+    const s = window.localStorage.getItem(LS_KEYS.demoAdmin);
+    if (!s) return null;
+    const obj = JSON.parse(s);
+    if (
+      obj &&
+      obj.user &&
+      obj.user.email === "admin@roadrescue.demo" &&
+      obj.user.role === "admin"
+    ) {
+      return obj;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+function clearDemoAdminSession() {
+  window.localStorage.removeItem(LS_KEYS.demoAdmin);
 }
 
 function ensureSeedData() {
@@ -193,17 +235,39 @@ export const dataService = {
      * In mock mode (or when not authenticated), returns { session: null, user: null }.
      *
      * NOTE: This method is used by the admin auth gate; keep the shape stable.
+     * 
+     * MODIFIED: Demo-only logic: If Supabase session unavailable, check for demoAdmin session in localStorage.
+     * If local demoAdmin session found, returns its info as { session, user }.
      */
     const supabase = getSupabase();
-    if (!supabase) return { session: null, user: null };
+    if (supabase) {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw new Error(error.message || "Could not load session.");
+      const session = data?.session || null;
+      const user = session?.user || null;
+      return { session, user };
+    }
 
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw new Error(error.message || "Could not load session.");
-
-    const session = data?.session || null;
-    const user = session?.user || null;
-    return { session, user };
+    // --- DEMO ADMIN Fallback (dev/demo ONLY) ---
+    const demo = getDemoAdminSession();
+    if (demo) {
+      // Emulate session shape: demo.session.user.email matches what RequireAuth expects
+      return {
+        session: {
+          user: demo.user,
+          // could add minimal token if needed
+        },
+        user: demo.user,
+      };
+    }
+    return { session: null, user: null };
   },
+
+  /**
+   * For quick local demo access, sets the demo admin session.
+   * Only called by LoginPage when running in local/mock mode.
+   */
+  setDemoAdminSession,
 
   // PUBLIC_INTERFACE
   async getCurrentProfile() {
@@ -314,9 +378,12 @@ export const dataService = {
     const supabase = getSupabase();
     if (supabase) {
       await supabase.auth.signOut();
+      // clear any fallback demo session as well
+      clearDemoAdminSession();
       return;
     }
     clearLocalSession();
+    clearDemoAdminSession();
   },
 
   // PUBLIC_INTERFACE
