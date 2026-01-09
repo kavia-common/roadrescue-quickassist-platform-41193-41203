@@ -160,6 +160,114 @@ function setLocalFees(fees) {
   writeJson(LS_KEYS.fees, fees);
 }
 
+/** Extract a friendlier UI message from a supabase-js error (best-effort). */
+function friendlySupabaseErrorMessage(err, fallback) {
+  const msg = err?.message || "";
+  if (!msg) return fallback;
+  if (msg.toLowerCase().includes("row level security")) return "Permission denied. Please contact an admin.";
+  return msg;
+}
+
+/** Best-effort: detect if a Postgres column is missing based on error message. */
+function isMissingColumnError(err) {
+  const msg = err?.message || "";
+  return msg.toLowerCase().includes("column") && msg.toLowerCase().includes("does not exist");
+}
+
+/**
+ * Atomic lifecycle update helpers (Supabase mode).
+ *
+ * Avoid raw SQL/rpc: these are implemented purely with supabase-js updates + guarded predicates.
+ */
+async function supaAtomicAcceptRequest(supabase, { requestId, mechanicId, assignedAtIso }) {
+  // New schema: mechanic_id/status/assigned_at guarded by mechanic_id IS NULL.
+  const { data: row1, error: err1 } = await supabase
+    .from("requests")
+    .update({ mechanic_id: mechanicId, status: "assigned", assigned_at: assignedAtIso })
+    .eq("id", requestId)
+    .is("mechanic_id", null)
+    .select("*")
+    .maybeSingle();
+
+  if (!err1) return { updated: Boolean(row1), row: row1, used: "preferred" };
+
+  if (!isMissingColumnError(err1)) {
+    throw new Error(friendlySupabaseErrorMessage(err1, "Could not accept request."));
+  }
+
+  // Legacy schema: assigned_mechanic_id/status guarded by assigned_mechanic_id IS NULL.
+  const { data: row2, error: err2 } = await supabase
+    .from("requests")
+    .update({ assigned_mechanic_id: mechanicId, status: "ASSIGNED", assigned_at: assignedAtIso })
+    .eq("id", requestId)
+    .is("assigned_mechanic_id", null)
+    .select("*")
+    .maybeSingle();
+
+  if (err2) throw new Error(friendlySupabaseErrorMessage(err2, "Could not accept request."));
+  return { updated: Boolean(row2), row: row2, used: "legacy" };
+}
+
+async function supaAtomicStartRequest(supabase, { requestId, mechanicId }) {
+  // New schema: assigned -> in_progress
+  const { data: row1, error: err1 } = await supabase
+    .from("requests")
+    .update({ status: "in_progress" })
+    .eq("id", requestId)
+    .eq("mechanic_id", mechanicId)
+    .eq("status", "assigned")
+    .select("*")
+    .maybeSingle();
+
+  if (!err1) return { updated: Boolean(row1), row: row1, used: "preferred" };
+
+  if (!isMissingColumnError(err1)) {
+    throw new Error(friendlySupabaseErrorMessage(err1, "Could not start request."));
+  }
+
+  // Legacy schema: set WORKING; cannot enforce prior status in a schema-agnostic way.
+  const { data: row2, error: err2 } = await supabase
+    .from("requests")
+    .update({ status: "WORKING" })
+    .eq("id", requestId)
+    .eq("assigned_mechanic_id", mechanicId)
+    .select("*")
+    .maybeSingle();
+
+  if (err2) throw new Error(friendlySupabaseErrorMessage(err2, "Could not start request."));
+  return { updated: Boolean(row2), row: row2, used: "legacy" };
+}
+
+async function supaAtomicCompleteRequest(supabase, { requestId, mechanicId, completedAtIso }) {
+  // New schema: in_progress -> completed with completed_at
+  const { data: row1, error: err1 } = await supabase
+    .from("requests")
+    .update({ status: "completed", completed_at: completedAtIso })
+    .eq("id", requestId)
+    .eq("mechanic_id", mechanicId)
+    .eq("status", "in_progress")
+    .select("*")
+    .maybeSingle();
+
+  if (!err1) return { updated: Boolean(row1), row: row1, used: "preferred" };
+
+  if (!isMissingColumnError(err1)) {
+    throw new Error(friendlySupabaseErrorMessage(err1, "Could not complete request."));
+  }
+
+  // Legacy schema: status=COMPLETED with best-effort completed_at.
+  const { data: row2, error: err2 } = await supabase
+    .from("requests")
+    .update({ status: "COMPLETED", completed_at: completedAtIso })
+    .eq("id", requestId)
+    .eq("assigned_mechanic_id", mechanicId)
+    .select("*")
+    .maybeSingle();
+
+  if (err2) throw new Error(friendlySupabaseErrorMessage(err2, "Could not complete request."));
+  return { updated: Boolean(row2), row: row2, used: "legacy" };
+}
+
 /**
  * Admin panel must not depend on `profiles.email` existing.
  * Some deployments intentionally omit it, and RLS should not require it for admin reads.
@@ -843,7 +951,13 @@ export const dataService = {
      * IMPORTANT:
      * - Supabase expects `requests.status` as: open | assigned | in_progress | completed | cancelled
      * - UI uses canonical tokens: OPEN | ASSIGNED | EN_ROUTE | WORKING | COMPLETED
-     * This function accepts either and writes the correct DB value.
+     *
+     * This method now supports atomic lifecycle transitions (accept/start/complete) when:
+     * - setting status to ASSIGNED with a mechanic assignment
+     * - setting status to WORKING/EN_ROUTE
+     * - setting status to COMPLETED
+     *
+     * If these preconditions are not met, it falls back to a normal update.
      */
     ensureSeedData();
     const supabase = getSupabase();
@@ -863,6 +977,42 @@ export const dataService = {
     };
 
     if (supabase) {
+      const canonicalStatus = patch.status !== undefined ? normalizeStatus(patch.status) : null;
+      const desiredMechId = patch.assignedMechanicId !== undefined ? patch.assignedMechanicId : undefined;
+
+      // Atomic accept: if admin is assigning a mechanic and moving to ASSIGNED, do it in one guarded update.
+      if (canonicalStatus === "ASSIGNED" && desiredMechId) {
+        const { updated } = await supaAtomicAcceptRequest(supabase, {
+          requestId,
+          mechanicId: desiredMechId,
+          assignedAtIso: new Date().toISOString(),
+        });
+        if (!updated) throw new Error("Could not accept/assign request (it may already be assigned).");
+
+        // Also best-effort update assigned_mechanic_email (not part of atomic accept; optional column).
+        if (patch.assignedMechanicEmail !== undefined) {
+          await supabase.from("requests").update({ assigned_mechanic_email: patch.assignedMechanicEmail }).eq("id", requestId);
+        }
+        return true;
+      }
+
+      // Atomic start: if admin wants to mark working/en_route, it implies start (assigned -> in_progress).
+      if ((canonicalStatus === "WORKING" || canonicalStatus === "EN_ROUTE") && desiredMechId) {
+        await supaAtomicStartRequest(supabase, { requestId, mechanicId: desiredMechId });
+        return true;
+      }
+
+      // Atomic complete: if admin wants to complete, set completed_at.
+      if (canonicalStatus === "COMPLETED" && desiredMechId) {
+        await supaAtomicCompleteRequest(supabase, {
+          requestId,
+          mechanicId: desiredMechId,
+          completedAtIso: new Date().toISOString(),
+        });
+        return true;
+      }
+
+      // Fallback: generic update (non-atomic, used for CANCELLED, OPEN, unassign, etc.)
       const update = {};
 
       if (patch.status !== undefined) update.status = mapUiStatusToDb(patch.status);
@@ -875,7 +1025,7 @@ export const dataService = {
       if (patch.assignedMechanicEmail !== undefined) update.assigned_mechanic_email = patch.assignedMechanicEmail;
 
       const { error } = await supabase.from("requests").update(update).eq("id", requestId);
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(friendlySupabaseErrorMessage(error, "Could not update request."));
       return true;
     }
 
