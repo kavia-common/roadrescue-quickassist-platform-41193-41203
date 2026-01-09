@@ -19,8 +19,8 @@ export function RequireAuth({ user, children }) {
    *
    * Required behavior (per request):
    * - Fetch Supabase session via `supabase.auth.getSession()`
-   * - Check `session.user.app_metadata.role === 'admin'`
-   * - If missing session or not admin, redirect to `/login`
+   * - Allow access ONLY when `session.user.email === 'admin@roadrescue.demo'`
+   * - If missing session or non-matching email, redirect to `/login`
    *
    * Notes:
    * - In mock mode (no Supabase configured), we preserve existing behavior using the `user` prop.
@@ -50,9 +50,10 @@ export function RequireAuth({ user, children }) {
         }
 
         const session = data?.session || null;
-        const role = session?.user?.app_metadata?.role;
+        const email = session?.user?.email || "";
 
-        if (!session || role !== "admin") {
+        // Email-based demo admin access (no role/app_metadata dependency).
+        if (!session || email !== "admin@roadrescue.demo") {
           navigate("/login", { replace: true, state: { from: location.pathname } });
           return;
         }
