@@ -737,11 +737,10 @@ export const dataService = {
     /**
      * Update a request (status and/or assignment).
      *
-     * Robust behavior:
-     * - Normalizes status to canonical token before persisting (OPEN/ASSIGNED/EN_ROUTE/WORKING/COMPLETED).
-     * - Uses `.select().maybeSingle()` to ensure we actually updated a row (prevents silent no-ops).
-     * - If Supabase is misconfigured / table missing / RLS blocks writes, falls back to local demo persistence
-     *   so the admin UI remains functional in mock environments.
+     * Returns persistence metadata so the UI can clearly indicate whether the change was
+     * saved to Supabase or only applied to demo/local storage.
+     *
+     * @returns {Promise<{ ok: true, persisted: 'supabase'|'demo' }>}
      */
     ensureSeedData();
     const supabase = getSupabase();
@@ -754,7 +753,7 @@ export const dataService = {
       if (nextPatch.status !== undefined) nextPatch.status = normalizeStatus(nextPatch.status);
       all[idx] = { ...all[idx], ...nextPatch };
       setLocalRequests(all);
-      return true;
+      return { ok: true, persisted: "demo" };
     };
 
     if (supabase) {
@@ -779,7 +778,7 @@ export const dataService = {
           return updateLocal();
         }
 
-        return true;
+        return { ok: true, persisted: "supabase" };
       } catch (e) {
         // Network/runtime issues: keep the UI usable in demo mode.
         const msg = String(e?.message || "");

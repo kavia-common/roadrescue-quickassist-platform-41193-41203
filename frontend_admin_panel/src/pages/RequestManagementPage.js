@@ -93,13 +93,21 @@ export function RequestManagementPage() {
       const newMechId = assignById[req.id] || null;
       const mech = mechanics.find((m) => m.id === newMechId) || null;
 
-      await dataService.updateRequest(req.id, {
+      const result = await dataService.updateRequest(req.id, {
         status: newStatus,
         assignedMechanicId: newMechId,
         assignedMechanicEmail: mech ? mech.email : null,
       });
 
-      showToast("success", `Saved request ${req.id.slice(0, 8)}.`);
+      if (result?.persisted === "demo") {
+        showToast(
+          "error",
+          `Saved request ${req.id.slice(0, 8)} in DEMO/local storage (Supabase update blocked or schema missing).`
+        );
+      } else {
+        showToast("success", `Saved request ${req.id.slice(0, 8)} to Supabase.`);
+      }
+
       await load();
     } catch (e) {
       setError(e.message || "Could not update request.");
@@ -113,8 +121,17 @@ export function RequestManagementPage() {
     setBusyId(req.id);
     setError("");
     try {
-      await dataService.updateRequest(req.id, { status: "COMPLETED" });
-      showToast("success", `Closed request ${req.id.slice(0, 8)} (Completed).`);
+      const result = await dataService.updateRequest(req.id, { status: "COMPLETED" });
+
+      if (result?.persisted === "demo") {
+        showToast(
+          "error",
+          `Closed request ${req.id.slice(0, 8)} in DEMO/local storage (Supabase update blocked or schema missing).`
+        );
+      } else {
+        showToast("success", `Closed request ${req.id.slice(0, 8)} (Completed) in Supabase.`);
+      }
+
       await load();
     } catch (e) {
       setError(e.message || "Could not close request.");
@@ -246,12 +263,12 @@ function QuickReassign({ mechanics, onDone }) {
     setBusy(true);
     try {
       const m = mechanics.find((x) => x.email.toLowerCase() === mechanicEmail.trim().toLowerCase()) || null;
-      await dataService.updateRequest(requestId.trim(), {
+      const result = await dataService.updateRequest(requestId.trim(), {
         assignedMechanicId: m ? m.id : null,
         assignedMechanicEmail: m ? m.email : null,
         status,
       });
-      setMsg("Updated.");
+      setMsg(result?.persisted === "demo" ? "Updated (DEMO/local only — not persisted to Supabase)." : "Updated (persisted to Supabase).");
       setRequestId("");
       setMechanicEmail("");
       onDone?.();
