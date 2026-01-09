@@ -591,6 +591,274 @@ export const dataService = {
   },
 
   // PUBLIC_INTERFACE
+  async queryRequestsForAnalytics({
+    timeRange = "30d",
+    from = null,
+    to = null,
+    status = "ALL",
+    assigned = "ALL",
+    search = "",
+    limit = 500,
+  } = {}) {
+    /**
+     * Fetches a bounded set of requests for analytics with server-side filtering when possible.
+     *
+     * Filters supported (using existing schema fields only):
+     * - Time range: uses `submitted_at` when present, otherwise `created_at`
+     * - Status: uses `requests.status` (db values: open|assigned|in_progress|completed|cancelled)
+     * - Assigned: uses `assigned_mechanic_id` OR legacy `mechanic_id`
+     * - Search: best-effort across request id, vehicle fields, and address
+     *
+     * Returns normalized request rows in the same shape as listRequests(), but typically fewer rows.
+     */
+    ensureSeedData();
+
+    const clampLimit = Math.max(1, Math.min(Number(limit) || 200, 2000));
+    const q = String(search || "").trim().toLowerCase();
+
+    const computeFromTo = () => {
+      // If explicit from/to provided, prefer them.
+      const fromDate = from ? new Date(from) : null;
+      const toDate = to ? new Date(to) : null;
+
+      if (fromDate && !Number.isNaN(fromDate.getTime()) && toDate && !Number.isNaN(toDate.getTime())) {
+        return { fromIso: fromDate.toISOString(), toIso: toDate.toISOString() };
+      }
+
+      const now = new Date();
+      const end = toDate && !Number.isNaN(toDate.getTime()) ? toDate : now;
+
+      const start = new Date(end.getTime());
+      const tr = String(timeRange || "30d").toLowerCase();
+      if (tr === "24h") start.setHours(start.getHours() - 24);
+      else if (tr === "7d") start.setDate(start.getDate() - 7);
+      else if (tr === "30d") start.setDate(start.getDate() - 30);
+      else if (tr === "90d") start.setDate(start.getDate() - 90);
+      else if (tr === "ytd") {
+        start.setMonth(0, 1);
+        start.setHours(0, 0, 0, 0);
+      }
+      else if (tr === "all") return { fromIso: null, toIso: null };
+      else start.setDate(start.getDate() - 30);
+
+      return { fromIso: start.toISOString(), toIso: end.toISOString() };
+    };
+
+    const { fromIso, toIso } = computeFromTo();
+
+    const supabase = getSupabase();
+    if (supabase) {
+      // Use explicit selects to avoid pulling huge JSON columns unnecessarily.
+      // We still need enough to render "Recent activity" and compute counts.
+      let query = supabase
+        .from("requests")
+        .select(
+          [
+            "id",
+            "status",
+            "submitted_at",
+            "created_at",
+            "requester_id",
+            "user_id",
+            "user_email",
+            "assigned_mechanic_id",
+            "mechanic_id",
+            "assigned_mechanic_email",
+            "vehicle",
+            "vehicle_make",
+            "vehicle_model",
+            "vehicle_year",
+            "vehicle_plate",
+            "issue_description",
+            "address",
+            "latitude",
+            "longitude",
+            "accepted_at",
+            "assigned_at",
+            "completed_at",
+          ].join(",")
+        )
+        .order("submitted_at", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(clampLimit);
+
+      // Time range: apply to both known timestamp columns with OR to handle schema variations.
+      // NOTE: Supabase/PostgREST OR syntax: .or("a.gte.X,b.gte.X") is supported.
+      // We use two separate ORs for from/to to keep it readable.
+      if (fromIso) {
+        query = query.or(`submitted_at.gte.${fromIso},created_at.gte.${fromIso}`);
+      }
+      if (toIso) {
+        query = query.or(`submitted_at.lte.${toIso},created_at.lte.${toIso}`);
+      }
+
+      // Status filter: db uses lowercase tokens.
+      if (status && status !== "ALL") {
+        const dbStatus = String(status).toLowerCase();
+        query = query.eq("status", dbStatus);
+      }
+
+      // Assignment filter: support both column names.
+      if (assigned && assigned !== "ALL") {
+        if (assigned === "ASSIGNED") {
+          query = query.or("assigned_mechanic_id.not.is.null,mechanic_id.not.is.null");
+        } else if (assigned === "UNASSIGNED") {
+          query = query.or("assigned_mechanic_id.is.null,mechanic_id.is.null");
+        }
+      }
+
+      // Search filter: best-effort OR across common string columns.
+      // We avoid `ilike` on UUID fields; instead, search by equality on id only if it looks UUID-ish.
+      if (q) {
+        const like = `%${q}%`;
+
+        // If query looks like an id prefix, we can still use ilike on text columns and id::text is not available.
+        // We'll rely on vehicle/address fields and client-side filtering of id.
+        query = query.or(
+          [
+            `vehicle_make.ilike.${like}`,
+            `vehicle_model.ilike.${like}`,
+            `vehicle_plate.ilike.${like}`,
+            `issue_description.ilike.${like}`,
+            `address.ilike.${like}`,
+            `user_email.ilike.${like}`,
+            `assigned_mechanic_email.ilike.${like}`,
+          ].join(",")
+        );
+      }
+
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+
+      const mapped = (data || []).map((r) => {
+        const vehicle =
+          r.vehicle ||
+          (r.vehicle_make || r.vehicle_model || r.vehicle_year || r.vehicle_plate
+            ? {
+                make: r.vehicle_make || "",
+                model: r.vehicle_model || "",
+                year: r.vehicle_year != null ? String(r.vehicle_year) : "",
+                plate: r.vehicle_plate || "",
+              }
+            : { make: "", model: "", year: "", plate: "" });
+
+        const dbStatus = String(r.status || "open").toLowerCase();
+        const statusToUi = {
+          new: "OPEN",
+          pending: "OPEN",
+          open: "OPEN",
+          assigned: "ASSIGNED",
+          accepted: "ASSIGNED",
+          arrived: "EN_ROUTE",
+          in_progress: "WORKING",
+          completed: "COMPLETED",
+          cancelled: "CANCELLED",
+        };
+
+        const requesterId = r.requester_id ?? r.user_id ?? r.userId ?? null;
+        const assignedMechanicId = r.assigned_mechanic_id ?? r.mechanic_id ?? null;
+
+        const userIdentifier = bestEffortUserIdentifier({
+          id: requesterId,
+          user_email: r.user_email,
+          userEmail: r.userEmail,
+        });
+
+        return {
+          id: r.id,
+          createdAt: r.submitted_at || r.created_at || r.createdAt,
+          userId: requesterId,
+          userEmail: userIdentifier,
+          vehicle,
+          issueDescription: r.issue_description || r.issueDescription || "",
+          contact: r.contact || { name: "", phone: "" },
+          status: normalizeStatus(statusToUi[dbStatus] || r.status),
+          assignedMechanicId,
+          assignedMechanicEmail: r.assigned_mechanic_email ?? null,
+          notes: r.notes || [],
+          address: r.address || null,
+          latitude: r.latitude ?? null,
+          longitude: r.longitude ?? null,
+          assignedAt: r.accepted_at || r.assigned_at || null,
+          completedAt: r.completed_at || null,
+        };
+      });
+
+      // Client-side final pass for id search (since we can't reliably ilike UUID via PostgREST without a view/cast).
+      const final = q
+        ? mapped.filter((r) => {
+            const hay = [
+              r.id,
+              r.userEmail,
+              r.status,
+              r.vehicle?.make,
+              r.vehicle?.model,
+              r.vehicle?.plate,
+              r.issueDescription,
+              r.address,
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase();
+            return hay.includes(q);
+          })
+        : mapped;
+
+      return final;
+    }
+
+    // Mock mode: reuse listRequests() then filter locally.
+    const all = await this.listRequests();
+
+    const filtered = all.filter((r) => {
+      // Time filtering
+      const t = r.createdAt ? new Date(r.createdAt).getTime() : 0;
+      if (fromIso) {
+        const minT = new Date(fromIso).getTime();
+        if (t && t < minT) return false;
+      }
+      if (toIso) {
+        const maxT = new Date(toIso).getTime();
+        if (t && t > maxT) return false;
+      }
+
+      // Status filter (canonical)
+      if (status && status !== "ALL") {
+        if (normalizeStatus(r.status) !== normalizeStatus(status)) return false;
+      }
+
+      // Assigned filter
+      if (assigned && assigned !== "ALL") {
+        const isAssigned = Boolean(r.assignedMechanicId);
+        if (assigned === "ASSIGNED" && !isAssigned) return false;
+        if (assigned === "UNASSIGNED" && isAssigned) return false;
+      }
+
+      // Search
+      if (q) {
+        const hay = [
+          r.id,
+          r.userEmail,
+          r.status,
+          r.vehicle?.make,
+          r.vehicle?.model,
+          r.vehicle?.plate,
+          r.issueDescription,
+          r.address,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+
+      return true;
+    });
+
+    return filtered.slice(0, clampLimit);
+  },
+
+  // PUBLIC_INTERFACE
   async updateRequest(requestId, patch) {
     /**
      * Admin updates an existing request.
