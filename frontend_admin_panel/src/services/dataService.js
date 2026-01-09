@@ -346,10 +346,19 @@ export async function getCurrentProfile() {
 }
 
 const REQUESTS_CHANGED_EVENT = "requests-changed";
+const PROFILES_CHANGED_EVENT = "profiles-changed";
 
 function emitRequestsChanged(detail) {
   try {
     window.dispatchEvent(new CustomEvent(REQUESTS_CHANGED_EVENT, { detail }));
+  } catch {
+    // ignore
+  }
+}
+
+function emitProfilesChanged(detail) {
+  try {
+    window.dispatchEvent(new CustomEvent(PROFILES_CHANGED_EVENT, { detail }));
   } catch {
     // ignore
   }
@@ -625,6 +634,10 @@ export const dataService = {
       if (idx < 0) throw new Error("User not found.");
       users[idx] = { ...users[idx], approved: true, role: "approved_mechanic" };
       setLocalUsers(users);
+
+      // Cross-tab/app hint (best-effort): mechanic portal login screen can listen and refresh.
+      emitProfilesChanged({ type: "mechanic-approved", userId, role: "approved_mechanic", approved: true, persisted: "demo" });
+
       return { ok: true, persisted: "demo" };
     };
 
@@ -682,7 +695,10 @@ export const dataService = {
 
     // Attempt #1
     const r1 = await attemptUpdate({ forceCacheRefresh: false });
-    if (r1.ok) return { ok: true, persisted: "supabase" };
+    if (r1.ok) {
+      emitProfilesChanged({ type: "mechanic-approved", userId, role: "approved_mechanic", approved: true, persisted: "supabase" });
+      return { ok: true, persisted: "supabase" };
+    }
 
     // Handle known failure classes
     if (isMissingProfilesSchemaError(r1.error)) {
@@ -693,6 +709,7 @@ export const dataService = {
       const r2 = await attemptUpdate({ forceCacheRefresh: true });
       if (r2.ok) {
         _profilesSchemaHealthy = true;
+        emitProfilesChanged({ type: "mechanic-approved", userId, role: "approved_mechanic", approved: true, persisted: "supabase", retried: true });
         return { ok: true, persisted: "supabase", retried: true };
       }
 
