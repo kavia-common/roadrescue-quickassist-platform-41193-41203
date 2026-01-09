@@ -125,34 +125,65 @@ function setLocalFees(fees) {
   writeJson(LS_KEYS.fees, fees);
 }
 
-async function supaGetUserRole(supabase, userId, email) {
+/**
+ * Best-effort email enrichment:
+ * Some Supabase schemas do not store email in public.profiles. Email lives in auth.users.
+ * If the provided key is a service role key, we can use the Admin API to list users.
+ * If not permitted, we return an empty map and the UI will show "(unknown)" for email.
+ */
+async function tryGetAuthEmailById(supabase) {
+  try {
+    // supabase-js exposes auth.admin only when using a service role key; calling it with anon key will error.
+    if (!supabase?.auth?.admin?.listUsers) return new Map();
+    const { data, error } = await supabase.auth.admin.listUsers();
+    if (error) return new Map();
+    const users = data?.users || [];
+    const map = new Map();
+    users.forEach((u) => {
+      if (u?.id) map.set(u.id, u.email || "");
+    });
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+async function supaGetUserRole(supabase, userId) {
   try {
     const { data, error } = await supabase.from("profiles").select("role,approved").eq("id", userId).maybeSingle();
     if (error) return { role: "user", approved: true };
+
     if (!data) {
-      await supabase.from("profiles").insert({ id: userId, email, role: "user", approved: true });
+      // IMPORTANT:
+      // Some deployments do NOT have `profiles.email` (email is only in `auth.users.email`).
+      // Do not insert unknown columns; only insert what we can safely assume exists.
+      await supabase.from("profiles").insert({ id: userId, role: "user", approved: true });
       return { role: "user", approved: true };
     }
+
     return { role: data.role || "user", approved: data.approved ?? true };
   } catch {
     return { role: "user", approved: true };
   }
 }
 
-async function supaGetProfile(supabase, userId, email) {
+async function supaGetProfile(supabase, userId) {
   try {
-    const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").eq("id", userId).maybeSingle();
+    // IMPORTANT: Avoid selecting `email` from profiles; it may not exist in some schemas.
+    const { data, error } = await supabase.from("profiles").select("id,role,approved,profile").eq("id", userId).maybeSingle();
     if (error) throw error;
+
     if (!data) {
       // Create a default profile row if missing; policies should allow self-insert by id=auth.uid().
       const { data: inserted, error: insertError } = await supabase
         .from("profiles")
-        .insert({ id: userId, email, role: "user", approved: true })
-        .select("id,email,role,approved,profile")
+        .insert({ id: userId, role: "user", approved: true })
+        .select("id,role,approved,profile")
         .maybeSingle();
       if (insertError) throw insertError;
       return inserted || null;
     }
+
     return data;
   } catch (e) {
     // Let caller decide how to surface errors.
@@ -298,7 +329,7 @@ export const dataService = {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw new Error(error.message);
       const user = data.user;
-      const roleInfo = await supaGetUserRole(supabase, user.id, user.email);
+      const roleInfo = await supaGetUserRole(supabase, user.id);
       return { id: user.id, email: user.email, role: roleInfo.role, approved: roleInfo.approved };
     }
 
@@ -327,7 +358,7 @@ export const dataService = {
       const { data } = await supabase.auth.getUser();
       const user = data?.user;
       if (!user) return null;
-      const roleInfo = await supaGetUserRole(supabase, user.id, user.email);
+      const roleInfo = await supaGetUserRole(supabase, user.id);
       return { id: user.id, email: user.email, role: roleInfo.role, approved: roleInfo.approved };
     }
 
@@ -344,9 +375,24 @@ export const dataService = {
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").order("email", { ascending: true });
+      // IMPORTANT:
+      // Do not select/order by profiles.email; the column may not exist.
+      // We order by id for deterministic results, then optionally enrich emails
+      // from auth.users via admin API (service role key only).
+      const { data, error } = await supabase.from("profiles").select("id,role,approved,profile").order("id", { ascending: true });
       if (error) throw new Error(error.message);
-      return (data || []).map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
+
+      const emailById = await tryGetAuthEmailById(supabase);
+
+      return (data || [])
+        .map((u) => ({
+          id: u.id,
+          email: emailById.get(u.id) || "(unknown)",
+          role: u.role,
+          approved: u.approved,
+          profile: u.profile,
+        }))
+        .sort((a, b) => String(a.email || "").localeCompare(String(b.email || "")));
     }
 
     return getLocalUsers().map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
@@ -473,6 +519,6 @@ export const dataService = {
     const user = data?.user;
     if (!user) return null;
 
-    return await supaGetProfile(supabase, user.id, user.email);
+    return await supaGetProfile(supabase, user.id);
   },
 };
