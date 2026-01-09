@@ -29,8 +29,15 @@ export function DashboardPage() {
   }, []);
 
   const kpis = useMemo(() => {
-    const totalUsers = users.filter((u) => u.role === "user").length;
-    const totalMechanics = users.filter((u) => u.role === "mechanic" || u.role === "approved_mechanic").length;
+    /**
+     * KPI definitions:
+     * - Total users: all non-mechanic accounts (customers + admins). This avoids showing 0 when only admin exists.
+     * - Total mechanics: approved mechanics only (role=approved_mechanic OR (role=mechanic && approved=true)).
+     * - Open requests: anything not COMPLETED (statuses are normalized in dataService).
+     */
+    const totalUsers = users.filter((u) => u.role !== "mechanic" && u.role !== "approved_mechanic").length;
+
+    const totalMechanics = users.filter((u) => u.role === "approved_mechanic" || (u.role === "mechanic" && u.approved)).length;
 
     // requests are normalized in dataService; treat only COMPLETED as closed
     const openRequests = requests.filter((r) => r.status !== "COMPLETED").length;
