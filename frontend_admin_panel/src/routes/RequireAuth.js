@@ -159,11 +159,9 @@ export function RequireAuth({ user, children }) {
     return Boolean(profile && profile.role === "admin");
   }, [isSupa, user, profile]);
 
-  const decision = useMemo(() => {
-    if (!isSupa) return user ? "allow" : "deny";
-    if (loading) return "deny"; // while loading we still consider decision "pending/deny" (panel shows loading=true)
-    return canAccess ? "allow" : "deny";
-  }, [isSupa, user, loading, canAccess]);
+  // NOTE: We intentionally do not keep a separate `decision` variable here because it was unused
+  // and can become a lint-blocker in some strict CI/startup environments. The UI debug panel
+  // uses `debugState.decision` below, which is derived from `canAccess` and `loading`.
 
   const clearRetryTimer = () => {
     if (retryTimerRef.current) {
