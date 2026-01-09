@@ -31,17 +31,24 @@ export function DashboardPage() {
   const kpis = useMemo(() => {
     /**
      * KPI definitions:
-     * - Total users: all non-mechanic accounts (customers + admins). This avoids showing 0 when only admin exists.
-     * - Total mechanics: approved mechanics only (role=approved_mechanic OR (role=mechanic && approved=true)).
-     * - Open requests: anything not COMPLETED (statuses are normalized in dataService).
+     * - Total users: all non-mechanic accounts (customers + admins).
+     * - Total mechanics: approved mechanics only:
+     *      role === 'approved_mechanic'
+     *      OR (role === 'mechanic' && approved === true)
+     * - Open requests: requests whose status is in:
+     *      ['open','pending','new','unassigned'] (case/whitespace tolerant).
+     *
+     * Note: request statuses are *usually* normalized in dataService, but we still defensively normalize here.
      */
     const totalUsers = users.filter((u) => u.role !== "mechanic" && u.role !== "approved_mechanic").length;
 
-    const totalMechanics = users.filter((u) => u.role === "approved_mechanic" || (u.role === "mechanic" && u.approved)).length;
+    const totalMechanics = users.filter((u) => u.role === "approved_mechanic" || (u.role === "mechanic" && u.approved === true)).length;
 
-    // requests are normalized in dataService; treat only COMPLETED as closed
-    const openRequests = requests.filter((r) => r.status !== "COMPLETED").length;
-    const completedRequests = requests.filter((r) => r.status === "COMPLETED").length;
+    const openSet = new Set(["open", "pending", "new", "unassigned"]);
+    const openRequests = requests.filter((r) => openSet.has(String(r?.status || "").trim().toLowerCase())).length;
+
+    const completedRequests = requests.filter((r) => String(r?.status || "").trim().toUpperCase() === "COMPLETED").length;
+
     return { totalUsers, totalMechanics, openRequests, completedRequests };
   }, [users, requests]);
 
