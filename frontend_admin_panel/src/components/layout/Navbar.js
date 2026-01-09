@@ -29,6 +29,9 @@ export function Navbar({ user }) {
               <NavLink to="/users" className={({ isActive }) => (isActive ? "navlink active" : "navlink")}>
                 Users
               </NavLink>
+              <NavLink to="/mechanic-approvals" className={({ isActive }) => (isActive ? "navlink active" : "navlink")}>
+                Mechanic Approvals
+              </NavLink>
               <NavLink to="/requests" className={({ isActive }) => (isActive ? "navlink active" : "navlink")}>
                 Requests
               </NavLink>

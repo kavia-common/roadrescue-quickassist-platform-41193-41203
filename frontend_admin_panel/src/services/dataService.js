@@ -591,18 +591,21 @@ export const dataService = {
   // PUBLIC_INTERFACE
   async approveMechanic(userId) {
     /**
-     * Approves a mechanic account.
-     *
-     * Supabase schema expectation (per requirements/RLS docs):
-     * - `profiles.role` remains 'mechanic'
-     * - `profiles.approved` becomes true
-     *
-     * Mock mode keeps the existing local behavior but aligns role value to 'mechanic'.
+     * Backward-compatible mechanic approval:
+     * - Older UI called this for boolean `approved`.
+     * - We now also set `status='approved'` + `approved_at=now()` when supported.
      */
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { error } = await supabase.from("profiles").update({ approved: true, role: "mechanic" }).eq("id", userId);
+      const payload = {
+        role: "mechanic",
+        approved: true,
+        status: "approved",
+        approved_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("profiles").update(payload).eq("id", userId);
       if (error) throw new Error(error.message);
       return true;
     }
@@ -610,7 +613,111 @@ export const dataService = {
     const users = getLocalUsers();
     const idx = users.findIndex((u) => u.id === userId);
     if (idx < 0) throw new Error("User not found.");
-    users[idx] = { ...users[idx], approved: true, role: "mechanic" };
+    users[idx] = { ...users[idx], approved: true, role: "mechanic", status: "approved", approvedAt: new Date().toISOString() };
+    setLocalUsers(users);
+    return true;
+  },
+
+  // PUBLIC_INTERFACE
+  async listPendingMechanics() {
+    /**
+     * Returns profiles where role='mechanic' and status='pending'.
+     * Used by the dedicated "Mechanic Approvals" page.
+     */
+    ensureSeedData();
+    const supabase = getSupabase();
+
+    if (supabase) {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id,role,status,approved,approved_at,display_name,full_name,phone,service_type,email,created_at")
+        .eq("role", "mechanic")
+        .or("status.eq.pending,approved.eq.false");
+
+      if (error) throw new Error(error.message);
+
+      const rows = (data || []).map((p) => {
+        const explicitStatus = p.status ? String(p.status).toLowerCase() : null;
+        const effectiveStatus = explicitStatus || (p.approved === true ? "approved" : "pending");
+        return {
+          id: p.id,
+          email: bestEffortUserIdentifier(p),
+          displayName: p.display_name || p.full_name || null,
+          phone: p.phone || null,
+          serviceType: p.service_type || null,
+          status: effectiveStatus,
+          createdAt: p.created_at || null,
+        };
+      });
+
+      // Show pending first, then newest
+      rows.sort((a, b) => {
+        const ap = a.status === "pending" ? 0 : 1;
+        const bp = b.status === "pending" ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        const ad = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bd = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bd - ad;
+      });
+
+      // Filter strictly to pending for UI clarity
+      return rows.filter((r) => r.status === "pending");
+    }
+
+    // Mock mode: derive from local users list
+    return getLocalUsers()
+      .filter((u) => u.role === "mechanic" && !u.approved)
+      .map((u) => ({
+        id: u.id,
+        email: u.email,
+        displayName: u.profile?.name || null,
+        phone: u.phone || null,
+        serviceType: u.serviceType || null,
+        status: "pending",
+        createdAt: null,
+      }));
+  },
+
+  // PUBLIC_INTERFACE
+  async approveMechanicProfile(userId) {
+    /**
+     * Approve mechanic using the new status columns (preferred).
+     * Leaves `role='mechanic'`.
+     */
+    ensureSeedData();
+    const supabase = getSupabase();
+    if (supabase) {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ role: "mechanic", status: "approved", approved: true, approved_at: new Date().toISOString() })
+        .eq("id", userId);
+
+      if (error) throw new Error(error.message);
+      return true;
+    }
+
+    // Mock mode uses same behavior as approveMechanic()
+    return await this.approveMechanic(userId);
+  },
+
+  // PUBLIC_INTERFACE
+  async rejectMechanicProfile(userId) {
+    /**
+     * Reject mechanic using status='rejected'. (Optional requirement)
+     */
+    ensureSeedData();
+    const supabase = getSupabase();
+    if (supabase) {
+      const { error } = await supabase.from("profiles").update({ status: "rejected", approved: false, approved_at: null }).eq("id", userId);
+      if (error) throw new Error(error.message);
+      return true;
+    }
+
+    // Mock mode: mark as rejected for UI (no real effect beyond hiding from list)
+    const users = getLocalUsers();
+    const idx = users.findIndex((u) => u.id === userId);
+    if (idx < 0) throw new Error("User not found.");
+    users[idx] = { ...users[idx], approved: false, status: "rejected", role: "mechanic" };
     setLocalUsers(users);
     return true;
   },
