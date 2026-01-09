@@ -7,6 +7,9 @@ const LS_KEYS = {
   requests: "rrqa.requests",
   fees: "rrqa.fees",
   seeded: "rrqa.seeded",
+
+  // Hardcoded DEMO bypass (explicitly not tied to Supabase/env).
+  demoAdminSession: "rrqa.demo_admin_session",
 };
 
 function uid(prefix = "id") {
@@ -105,6 +108,38 @@ function setLocalSession(session) {
 }
 function clearLocalSession() {
   window.localStorage.removeItem(LS_KEYS.session);
+}
+
+/**
+ * Hardcoded DEMO admin session helpers.
+ * These are intentionally independent of Supabase/env.
+ */
+function getDemoAdminSession() {
+  return readJson(LS_KEYS.demoAdminSession, null);
+}
+function setDemoAdminSession(session) {
+  writeJson(LS_KEYS.demoAdminSession, session);
+}
+function clearDemoAdminSession() {
+  window.localStorage.removeItem(LS_KEYS.demoAdminSession);
+}
+
+// PUBLIC_INTERFACE
+function isDemoAdminActive() {
+  /** Returns true when the app is currently in hardcoded DEMO admin mode. */
+  const s = getDemoAdminSession();
+  return Boolean(s && s.userId);
+}
+
+// PUBLIC_INTERFACE
+function startDemoAdminSession() {
+  /**
+   * Enables hardcoded DEMO admin mode.
+   * This bypasses Supabase auth/profile checks and guarantees an admin user for navigation.
+   */
+  const demoUser = { userId: "demo_admin", email: "demo-admin@roadrescue.local", role: "admin" };
+  setDemoAdminSession(demoUser);
+  return demoUser;
 }
 function getLocalUsers() {
   return readJson(LS_KEYS.users, []);
@@ -293,6 +328,14 @@ export const dataService = {
   // PUBLIC_INTERFACE
   async login(email, password) {
     ensureSeedData();
+
+    // If DEMO mode is active, don't allow normal credentials to override it implicitly.
+    // Users can explicitly log out to exit demo mode.
+    if (isDemoAdminActive()) {
+      const s = getDemoAdminSession();
+      return { id: s.userId, email: s.email, role: "admin", approved: true, demo: true };
+    }
+
     const supabase = getSupabase();
     if (supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -311,6 +354,9 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async logout() {
+    // Always clear DEMO mode as part of logout.
+    clearDemoAdminSession();
+
     const supabase = getSupabase();
     if (supabase) {
       await supabase.auth.signOut();
@@ -322,6 +368,13 @@ export const dataService = {
   // PUBLIC_INTERFACE
   async getCurrentUser() {
     ensureSeedData();
+
+    // DEMO mode bypass: treat as authenticated admin regardless of Supabase/env.
+    const demo = getDemoAdminSession();
+    if (demo?.userId) {
+      return { id: demo.userId, email: demo.email, role: "admin", approved: true, demo: true };
+    }
+
     const supabase = getSupabase();
     if (supabase) {
       const { data } = await supabase.auth.getUser();
@@ -453,6 +506,20 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   isSupabaseConfigured,
+
+  // PUBLIC_INTERFACE
+  isDemoAdminActive,
+
+  // PUBLIC_INTERFACE
+  async demoAdminLogin() {
+    /**
+     * Hardcoded, in-app DEMO login.
+     * Guarantees an admin user and does not depend on env vars or Supabase.
+     */
+    startDemoAdminSession();
+    const s = getDemoAdminSession();
+    return { id: s.userId, email: s.email, role: "admin", approved: true, demo: true };
+  },
 
   // PUBLIC_INTERFACE
   getSupabaseClient() {

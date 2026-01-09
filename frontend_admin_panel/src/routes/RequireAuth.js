@@ -136,7 +136,8 @@ export function RequireAuth({ user, children }) {
    */
   const location = useLocation();
 
-  const isSupa = dataService.isSupabaseConfigured?.() && Boolean(dataService.getSupabaseClient?.());
+  const demoActive = Boolean(dataService.isDemoAdminActive?.());
+  const isSupa = !demoActive && dataService.isSupabaseConfigured?.() && Boolean(dataService.getSupabaseClient?.());
   const supabase = useMemo(() => (isSupa ? dataService.getSupabaseClient() : null), [isSupa]);
 
   const [loading, setLoading] = useState(Boolean(isSupa));
@@ -328,7 +329,8 @@ export function RequireAuth({ user, children }) {
 
   const debugPanel = <AdminDebugPanel state={debugState} />;
 
-  // Mock mode: preserve old redirect behavior.
+  // DEMO mode OR mock mode: preserve old redirect behavior (based on `user` prop).
+  // DEMO login sets a local session and updates App state, so `user` is always present and admin.
   if (!isSupa) {
     if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
     return (
