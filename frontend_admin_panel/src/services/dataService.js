@@ -674,12 +674,17 @@ export const dataService = {
         .order("created_at", { ascending: false })
         .limit(clampLimit);
 
-      // Time range: filter on nested request timestamps.
+      // Time range:
+      // IMPORTANT: Avoid chaining multiple `.or()` calls because each `.or()` adds a new OR group
+      // at the top-level, which can accidentally OR *all* filters together.
+      //
+      // To keep logic correct and simple, analytics uses a single timestamp field for filtering.
+      // We prefer `requests.created_at` as the canonical filter column here.
       if (fromIso) {
-        query = query.or(`request.submitted_at.gte.${fromIso},request.created_at.gte.${fromIso}`);
+        query = query.gte("request.created_at", fromIso);
       }
       if (toIso) {
-        query = query.or(`request.submitted_at.lte.${toIso},request.created_at.lte.${toIso}`);
+        query = query.lte("request.created_at", toIso);
       }
 
       // Status filter (lowercase db tokens).
@@ -816,8 +821,10 @@ export const dataService = {
           .order("created_at", { ascending: false })
           .limit(clampLimit);
 
-        if (fromIso) rq = rq.or(`submitted_at.gte.${fromIso},created_at.gte.${fromIso}`);
-        if (toIso) rq = rq.or(`submitted_at.lte.${toIso},created_at.lte.${toIso}`);
+        // Time range:
+        // Use a single column to avoid OR-grouping issues with other filters.
+        if (fromIso) rq = rq.gte("created_at", fromIso);
+        if (toIso) rq = rq.lte("created_at", toIso);
 
         if (status && status !== "ALL") {
           rq = rq.eq("status", String(status).toLowerCase());
