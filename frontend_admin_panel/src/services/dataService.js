@@ -10,7 +10,7 @@ const LS_KEYS = {
 };
 
 /**
- * Centralized, tolerant error detection for Supabase table reads.
+ * Centralized, tolerant error detection for Supabase table reads/writes.
  * In many demo setups the admin panel runs with an anon key and hits RLS,
  * which can manifest as:
  * - explicit permission errors
@@ -33,6 +33,77 @@ function isSupabaseReadBlockedError(error) {
     msg.includes("unauthorized") ||
     msg.includes("forbidden")
   );
+}
+
+/**
+ * PostgREST can briefly serve a stale schema cache after a migration (e.g. new column).
+ * These errors usually resolve after a short wait and retry.
+ */
+function isLikelySchemaCacheError(error) {
+  const msg = String(error?.message || "").toLowerCase();
+  return msg.includes("schema cache") || msg.includes("pgrst") || msg.includes("could not find");
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Small in-memory flag so we only “probe” schema once per page load.
+ * - null: unknown
+ * - true: schema seems healthy (profiles has id/role/approved)
+ * - false: schema seems missing/inaccessible
+ */
+let _profilesSchemaHealthy = null;
+
+/**
+ * PUBLIC_INTERFACE
+ */
+// PUBLIC_INTERFACE
+export async function checkProfilesSchema({ forceRefresh = false } = {}) {
+  /**
+   * Health-check utility for `public.profiles` schema.
+   *
+   * Tries to query `profiles` selecting `id, approved, role` with limit 1.
+   * - If it succeeds, the admin panel should *not* fallback on approvals due to schema errors.
+   * - If it fails with missing schema or RLS blocks, the caller can decide to show guidance / fallback.
+   *
+   * @param {object} opts
+   * @param {boolean} opts.forceRefresh When true, bypass cached result and re-check.
+   * @returns {Promise<{ ok: boolean, reason?: 'not_configured'|'schema_missing'|'rls_blocked'|'unknown', errorMessage?: string }>}
+   */
+  if (!forceRefresh && _profilesSchemaHealthy !== null) {
+    return { ok: _profilesSchemaHealthy === true };
+  }
+
+  const supabase = getSupabase();
+  if (!supabase) {
+    _profilesSchemaHealthy = false;
+    return { ok: false, reason: "not_configured" };
+  }
+
+  try {
+    // `limit(1)` reduces cost, and selecting the target columns verifies they exist.
+    const { error } = await supabase.from("profiles").select("id,approved,role").limit(1);
+    if (error) {
+      if (isMissingProfilesSchemaError(error)) {
+        _profilesSchemaHealthy = false;
+        return { ok: false, reason: "schema_missing", errorMessage: error.message };
+      }
+      if (isSupabaseReadBlockedError(error)) {
+        _profilesSchemaHealthy = false;
+        return { ok: false, reason: "rls_blocked", errorMessage: error.message };
+      }
+      _profilesSchemaHealthy = false;
+      return { ok: false, reason: "unknown", errorMessage: error.message };
+    }
+
+    _profilesSchemaHealthy = true;
+    return { ok: true };
+  } catch (e) {
+    _profilesSchemaHealthy = false;
+    return { ok: false, reason: "unknown", errorMessage: e?.message || String(e) };
+  }
 }
 
 function uid(prefix = "id") {
@@ -484,6 +555,18 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async approveMechanic(userId) {
+    /**
+     * Approve a mechanic (set approved=true and role=approved_mechanic).
+     *
+     * Behavior:
+     * - Prefer Supabase persistence when schema exists and write is permitted.
+     * - Fallback to local demo storage only when:
+     *    (a) schema truly missing/out-of-date (profiles/approved missing)
+     *    (b) RLS/privileges block write
+     * - If error looks like PostgREST schema cache staleness, automatically retry once after a short wait.
+     *
+     * @returns {Promise<{ ok: boolean, persisted: 'supabase'|'demo', retried?: boolean }>}
+     */
     ensureSeedData();
     const supabase = getSupabase();
 
@@ -494,53 +577,108 @@ export const dataService = {
       if (idx < 0) throw new Error("User not found.");
       users[idx] = { ...users[idx], approved: true, role: "approved_mechanic" };
       setLocalUsers(users);
-      return true;
+      return { ok: true, persisted: "demo" };
     };
 
-    if (supabase) {
-      try {
-        const { error } = await supabase
-          .from("profiles")
-          .update({ approved: true, role: "approved_mechanic" })
-          .eq("id", userId);
+    if (!supabase) return approveLocally();
 
-        if (error) {
-          // If the profiles table/column doesn't exist (or PostgREST schema cache is stale),
-          // do not crash the admin UI. Fall back to local demo store and provide a helpful message.
-          if (isMissingProfilesSchemaError(error)) {
-            approveLocally();
-            throw new Error(
-              "Supabase schema is missing/out-of-date for public.profiles.approved. " +
-                "Approval was applied in demo/local storage so the UI can proceed. " +
-                "To persist in Supabase: run assets/supabase_profiles_migration.sql.md and refresh the PostgREST schema cache (or wait a minute), then retry."
-            );
-          }
-
-          // If anon key + RLS blocks writes, also fall back to demo store.
-          if (isSupabaseReadBlockedError(error)) {
-            approveLocally();
-            throw new Error(
-              "Supabase blocked the approval update (likely RLS/insufficient privileges). " +
-                "Approval was applied in demo/local storage. " +
-                "To persist in Supabase, use a service role key for admin or adjust RLS policies."
-            );
-          }
-
-          // Unknown error: keep existing behavior (surface it).
-          throw new Error(error.message || "Could not approve mechanic.");
-        }
-
-        return true;
-      } catch (e) {
-        // Preserve intentional, helpful messages above.
-        if (e?.message) throw e;
-        // Anything else: fall back to local to avoid a broken UI.
+    // If we already know the schema is healthy, skip probing; otherwise do a lightweight check.
+    const schemaCheck = await checkProfilesSchema();
+    if (!schemaCheck.ok) {
+      // If schema missing or blocked, fall back immediately with a clear message.
+      if (schemaCheck.reason === "schema_missing") {
         approveLocally();
-        return true;
+        throw new Error(
+          "Supabase schema is missing/out-of-date for public.profiles.approved. " +
+            "Approval was applied in demo/local storage. " +
+            "To persist in Supabase: run assets/supabase_profiles_migration.sql.md, then refresh/allow time for PostgREST schema cache to update and retry."
+        );
+      }
+      if (schemaCheck.reason === "rls_blocked") {
+        approveLocally();
+        throw new Error(
+          "Supabase blocked access to public.profiles (likely RLS/insufficient privileges). " +
+            "Approval was applied in demo/local storage. " +
+            "To persist in Supabase, use a service role key for admin or adjust RLS policies."
+        );
+      }
+      // Unknown failure: try the update once; if it fails, fallback with the error message.
+    }
+
+    const attemptUpdate = async ({ forceCacheRefresh = false } = {}) => {
+      // `select()` confirms what the server returned and helps disambiguate “0 rows updated”.
+      // `head:false` is included on the retry to encourage PostgREST to re-evaluate cached schema.
+      const query = supabase
+        .from("profiles")
+        // eslint-disable-next-line no-unused-vars
+        .update({ approved: true, role: "approved_mechanic" }, forceCacheRefresh ? { returning: "representation", head: false } : undefined)
+        .eq("id", userId)
+        .select("id,role,approved");
+
+      const { data, error } = await query;
+
+      if (error) return { ok: false, error };
+
+      // If data is empty, treat as likely RLS or non-existent row.
+      if (!data || data.length === 0) {
+        return { ok: false, error: new Error("No rows updated. This may indicate RLS restrictions or a missing profile row for that user.") };
+      }
+
+      const row = data[0];
+      if (row?.approved !== true) {
+        return { ok: false, error: new Error("Approval update did not persist (approved flag not true).") };
+      }
+
+      return { ok: true };
+    };
+
+    // Attempt #1
+    const r1 = await attemptUpdate({ forceCacheRefresh: false });
+    if (r1.ok) return { ok: true, persisted: "supabase" };
+
+    // Handle known failure classes
+    if (isMissingProfilesSchemaError(r1.error)) {
+      // Could be “missing column” or “schema cache stale”. Retry once after a short wait,
+      // forcing the health-check to re-run and performing an update with head:false + select.
+      await sleep(2500);
+      await checkProfilesSchema({ forceRefresh: true });
+      const r2 = await attemptUpdate({ forceCacheRefresh: true });
+      if (r2.ok) {
+        _profilesSchemaHealthy = true;
+        return { ok: true, persisted: "supabase", retried: true };
+      }
+
+      // Still failing => real schema issue; fallback.
+      approveLocally();
+      throw new Error(
+        "Supabase schema is missing/out-of-date for public.profiles.approved (or schema cache is still stale). " +
+          "Approval was applied in demo/local storage. " +
+          "To persist in Supabase: run assets/supabase_profiles_migration.sql.md and refresh PostgREST schema cache (or wait 1–2 minutes), then retry."
+      );
+    }
+
+    if (isSupabaseReadBlockedError(r1.error)) {
+      approveLocally();
+      throw new Error(
+        "Supabase blocked the approval update (likely RLS/insufficient privileges). " +
+          "Approval was applied in demo/local storage. " +
+          "To persist in Supabase, use a service role key for admin or adjust RLS policies."
+      );
+    }
+
+    // If error smells like a schema-cache issue, do a one-time retry before giving up.
+    if (isLikelySchemaCacheError(r1.error)) {
+      await sleep(2500);
+      await checkProfilesSchema({ forceRefresh: true });
+      const r2 = await attemptUpdate({ forceCacheRefresh: true });
+      if (r2.ok) {
+        _profilesSchemaHealthy = true;
+        return { ok: true, persisted: "supabase", retried: true };
       }
     }
 
-    return approveLocally();
+    // Unknown error: surface it (do not silently fall back; that would hide real production issues)
+    throw new Error(r1.error?.message || "Could not approve mechanic.");
   },
 
   // PUBLIC_INTERFACE

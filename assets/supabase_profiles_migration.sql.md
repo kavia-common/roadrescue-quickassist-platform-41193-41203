@@ -16,7 +16,10 @@ If you see errors like:
 
 Run the SQL below in **Supabase Dashboard → SQL Editor**.
 
-After running the SQL, if the UI still errors with “schema cache”, wait briefly and/or refresh PostgREST's schema cache (Supabase Dashboard refresh, or simply retry after a minute) so PostgREST recognizes the new column.
+After running the SQL, if the UI still errors with “schema cache” (PostgREST cache), do the following:
+1) Wait ~30–90 seconds (Supabase PostgREST can take a moment to reload schema metadata)
+2) Hard refresh the admin UI
+3) Retry the action (approve mechanic) — the admin panel also performs an automatic one-time retry after ~2–3 seconds.
 
 ---
 
@@ -40,8 +43,13 @@ create table if not exists public.profiles (
 -- If your table exists but is missing columns, add them safely:
 alter table public.profiles add column if not exists role text;
 alter table public.profiles alter column role set default 'user';
+
+-- IMPORTANT: `approved` is required by the admin approval flow
 alter table public.profiles add column if not exists approved boolean;
 alter table public.profiles alter column approved set default false;
+-- Make it explicitly NOT NULL as expected by the frontends (safe if column is new; if existing with NULLs you may need to backfill first)
+alter table public.profiles alter column approved set not null;
+
 alter table public.profiles add column if not exists full_name text;
 alter table public.profiles add column if not exists profile jsonb;
 alter table public.profiles add column if not exists created_at timestamptz;
