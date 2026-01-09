@@ -83,6 +83,15 @@ export function RequestManagementPage() {
 
   useEffect(() => {
     load();
+
+    // Cross-portal refresh: if a mechanic accepts/updates a request, auto-reload.
+    const unsub = dataService.subscribeToRequestsChanged(() => {
+      load();
+    });
+
+    return () => {
+      unsub?.();
+    };
   }, []);
 
   const saveRow = async (req) => {

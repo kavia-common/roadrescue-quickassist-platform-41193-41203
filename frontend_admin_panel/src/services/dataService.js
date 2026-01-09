@@ -345,8 +345,56 @@ export async function getCurrentProfile() {
   return { role: p.role || null, full_name: p.full_name || null };
 }
 
+const REQUESTS_CHANGED_EVENT = "requests-changed";
+
+function emitRequestsChanged(detail) {
+  try {
+    window.dispatchEvent(new CustomEvent(REQUESTS_CHANGED_EVENT, { detail }));
+  } catch {
+    // ignore
+  }
+}
+
 export const dataService = {
   /** Admin facade: users, approvals, requests, fees (Supabase optional). */
+
+  // PUBLIC_INTERFACE
+  subscribeToRequestsChanged(handler) {
+    /**
+     * Subscribe to "requests changed" signals.
+     *
+     * - In Supabase mode, listens to Supabase realtime updates on `public.requests` (when enabled).
+     * - In demo/mock mode, only listens to the local event.
+     *
+     * Returns an unsubscribe function.
+     */
+    const wrapped = (e) => handler?.(e?.detail);
+    window.addEventListener(REQUESTS_CHANGED_EVENT, wrapped);
+
+    const supabase = getSupabase();
+    let channel = null;
+    if (supabase) {
+      try {
+        channel = supabase
+          .channel("rrqa-requests")
+          .on("postgres_changes", { event: "*", schema: "public", table: "requests" }, (payload) => {
+            emitRequestsChanged({ source: "supabase-realtime", payload });
+          })
+          .subscribe();
+      } catch {
+        // ignore; realtime may not be enabled
+      }
+    }
+
+    return () => {
+      window.removeEventListener(REQUESTS_CHANGED_EVENT, wrapped);
+      try {
+        if (channel && supabase) supabase.removeChannel(channel);
+      } catch {
+        // ignore
+      }
+    };
+  },
 
   // PUBLIC_INTERFACE
   async getCurrentSession() {
@@ -762,28 +810,38 @@ export const dataService = {
       if (patch.assignedMechanicId !== undefined) update.assigned_mechanic_id = patch.assignedMechanicId;
       if (patch.assignedMechanicEmail !== undefined) update.assigned_mechanic_email = patch.assignedMechanicEmail;
 
+      // best-effort updated_at bump (ignore if column doesn't exist)
+      update.updated_at = new Date().toISOString();
+
       try {
         const { data, error } = await supabase.from("requests").update(update).eq("id", requestId).select().maybeSingle();
 
         if (error) {
           // Graceful fallback for demo environments where anon key + RLS blocks write, or schema missing.
           if (isSupabaseReadBlockedError(error) || String(error?.message || "").toLowerCase().includes("does not exist")) {
-            return updateLocal();
+            const r = updateLocal();
+            emitRequestsChanged({ type: "updated", requestId });
+            return r;
           }
           throw new Error(error.message);
         }
 
         // Some RLS policies can yield "no rows returned" on update; treat as blocked and fall back.
         if (!data) {
-          return updateLocal();
+          const r = updateLocal();
+          emitRequestsChanged({ type: "updated", requestId });
+          return r;
         }
 
+        emitRequestsChanged({ type: "updated", requestId });
         return { ok: true, persisted: "supabase" };
       } catch (e) {
         // Network/runtime issues: keep the UI usable in demo mode.
         const msg = String(e?.message || "");
         if (msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("network")) {
-          return updateLocal();
+          const r = updateLocal();
+          emitRequestsChanged({ type: "updated", requestId });
+          return r;
         }
         throw new Error(msg || "Could not update request.");
       }
