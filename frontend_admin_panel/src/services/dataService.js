@@ -704,18 +704,25 @@ export const dataService = {
         }
       }
 
-      // Search filter: best-effort on nested request fields and assignment/mechanic id.
+      // Search filter: best-effort on nested request fields.
+      //
+      // IMPORTANT (Supabase/PostgREST `.or()` syntax):
+      // - Use a SINGLE `.or()` call containing comma-separated expressions.
+      // - Do NOT wrap expressions in parentheses.
+      // - Use plain column names for the embedded `request:requests(...)` resource (no `request.` prefixes).
+      //
+      // Ref: PostgREST `or` filter expects: "col.op.value,col.op.value"
       if (q) {
         const like = `%${q}%`;
         query = query.or(
           [
-            `request.vehicle_make.ilike.${like}`,
-            `request.vehicle_model.ilike.${like}`,
-            `request.vehicle_plate.ilike.${like}`,
-            `request.issue_description.ilike.${like}`,
-            `request.address.ilike.${like}`,
-            `request.user_email.ilike.${like}`,
-            `request.assigned_mechanic_email.ilike.${like}`,
+            `vehicle_make.ilike.${like}`,
+            `vehicle_model.ilike.${like}`,
+            `vehicle_plate.ilike.${like}`,
+            `issue_description.ilike.${like}`,
+            `address.ilike.${like}`,
+            `user_email.ilike.${like}`,
+            `assigned_mechanic_email.ilike.${like}`,
           ].join(",")
         );
       }
