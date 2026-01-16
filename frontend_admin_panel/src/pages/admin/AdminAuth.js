@@ -225,14 +225,14 @@ export function AdminAuth() {
       }
 
       // Remove hash/query to prevent "recovery" mode sticking on refresh.
-      // Keep the user on /admin, then navigate to /admin/dashboard (as requested).
+      // Redirect to /admin after password update (login screen), matching the requested flow.
       window.history.replaceState(null, document.title, "/admin");
 
       setNewPassword("");
       setConfirmNewPassword("");
 
-      setStatus({ type: "info", message: "Password updated. Redirecting to dashboard…" });
-      navigate("/admin/dashboard", { replace: true });
+      setStatus({ type: "info", message: "Password updated. Redirecting to admin login…" });
+      navigate("/admin", { replace: true });
     } catch (err) {
       setStatus({ type: "error", message: err?.message || "An unexpected error occurred." });
     } finally {

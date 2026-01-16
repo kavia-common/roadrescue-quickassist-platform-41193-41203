@@ -17,9 +17,22 @@ Admin-specific usage:
 
 ## Password reset flow
 
-The Admin Portal (`/admin`) includes:
-- "Forgot password?" -> calls `supabase.auth.resetPasswordForEmail(email, { redirectTo })`
-- Recovery link returns to `/admin` with `type=recovery`, where the UI prompts for a new password and calls `supabase.auth.updateUser({ password })`.
+The Admin Portal supports a dedicated reset route:
+
+- **Forgot password?** sends a reset email via:
+  `supabase.auth.resetPasswordForEmail(email, { redirectTo })`
+- The reset email link must redirect back to the SPA at:
+  **`/reset-password`**
+- The `/reset-password` page prompts for a new password and calls:
+  `supabase.auth.updateUser({ password })`
+- After success, the UI redirects the admin back to **`/admin`** (login screen).
+
+### Supabase Redirect URLs (required)
+
+In Supabase Dashboard → Authentication → URL Configuration, ensure these are allowed:
+
+- `https://<your-admin-domain>/reset-password`
+- `https://<your-admin-domain>/admin`
 
 ### Required env var
 

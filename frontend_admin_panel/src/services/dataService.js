@@ -34,7 +34,14 @@ function ensureSeedData() {
   // Mock-mode seed data only (NO admin seed; admin must authenticate via Supabase in Supabase mode).
   const users = [
     { id: uid("u"), email: "user@example.com", password: "password123", role: "user", approved: true },
-    { id: uid("m"), email: "mech@example.com", password: "password123", role: "mechanic", approved: false, profile: { name: "Alex Mechanic", serviceArea: "Downtown" } },
+    {
+      id: uid("m"),
+      email: "mech@example.com",
+      password: "password123",
+      role: "mechanic",
+      approved: false,
+      profile: { name: "Alex Mechanic", serviceArea: "Downtown" },
+    },
   ];
 
   const now = new Date().toISOString();
@@ -218,11 +225,7 @@ export const dataService = {
     if (!session || !user) return null;
 
     // IMPORTANT: Fetch by uid explicitly (not by email) to match RLS policies and the requirement.
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,role,full_name")
-      .eq("id", user.id)
-      .maybeSingle();
+    const { data, error } = await supabase.from("profiles").select("id,role,full_name").eq("id", user.id).maybeSingle();
 
     if (error) throw new Error(error.message || "Could not load profile.");
     return data ? { id: data.id, role: data.role || null, full_name: data.full_name || null } : null;
@@ -324,7 +327,9 @@ export const dataService = {
      *
      * IMPORTANT:
      * - The redirect URL must be allowed in Supabase Auth → URL Configuration → Redirect URLs.
-     * - This admin panel expects the reset link to return to: /admin
+     * - The reset email link MUST return to a real frontend route.
+     *
+     * This admin panel expects the reset link to return to: /reset-password
      *
      * Env:
      * - REACT_APP_FRONTEND_URL should be set to the deployed frontend origin (e.g. https://admin.example.com)
@@ -334,7 +339,7 @@ export const dataService = {
     if (!supabase) throw new Error("Supabase is not configured.");
 
     const baseUrl = process.env.REACT_APP_FRONTEND_URL || window.location.origin;
-    const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/admin`;
+    const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/reset-password`;
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
     if (error) throw new Error(error.message || "Could not start password reset.");
