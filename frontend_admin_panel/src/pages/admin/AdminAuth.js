@@ -55,6 +55,18 @@ export function AdminAuth() {
       });
 
       navigate("/admin/dashboard", { replace: true });
+      return;
+    }
+
+    // If signed in but not admin, keep redirect to /admin (requested behavior).
+    // TEMP DEBUG CHECK (as requested) before redirect.
+    if (!loading && user && !isAdmin) {
+      console.log("ADMIN CHECK", {
+        email: user?.email,
+        appMetadata: user?.app_metadata,
+        note: "User is signed in but NOT in public.admins; redirecting to /admin",
+      });
+      navigate("/admin", { replace: true });
     }
   }, [user, isAdmin, loading, navigate]);
 

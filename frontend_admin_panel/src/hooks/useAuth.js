@@ -8,16 +8,30 @@ import { dataService } from "../services/dataService";
  * - Exposes a simple "isAdmin" boolean for UI gating (AdminLayout/AdminAuth)
  *
  * IMPORTANT (EXACT FIX):
- * - In Supabase mode, admin is derived ONLY from:
- *   session.user.app_metadata.role === 'admin'
- * - No DB lookups (profiles/user_roles/etc) for admin gating.
+ * - In Supabase mode, admin is derived ONLY from `public.admins` table:
+ *   SELECT * FROM public.admins WHERE user_id = session.user.id (maybeSingle)
+ * - No app_metadata/profile/user_roles based admin gating is allowed.
  */
 
 const AuthContext = createContext(undefined);
 
-function checkAdmin(session) {
-  // Supabase: role is stored in app_metadata (authoritative for admin gating here)
-  return session?.user?.app_metadata?.role === "admin";
+/**
+ * PUBLIC_INTERFACE
+ */
+async function computeIsAdminFromAdminsTable(supabase, session) {
+  /** Returns true iff a row exists in `public.admins` for the current user. */
+  if (!supabase) return false;
+
+  const userId = session?.user?.id;
+  if (!userId) return false;
+
+  const { data, error } = await supabase.from("admins").select("user_id").eq("user_id", userId).maybeSingle();
+  if (error) {
+    // Fail closed: if the check cannot be performed, treat as not admin.
+    console.warn("[useAuth] admin check failed; denying admin access:", error.message || error);
+    return false;
+  }
+  return Boolean(data);
 }
 
 // PUBLIC_INTERFACE
@@ -58,7 +72,11 @@ export function AuthProvider({ children }) {
 
         setSession(s);
         setUser(u);
-        setIsAdmin(checkAdmin(s));
+
+        // Admin gating: ONLY via `public.admins` lookup (no app_metadata/profile fallbacks).
+        const admin = await computeIsAdminFromAdminsTable(supabase, s);
+        if (!mounted) return;
+        setIsAdmin(admin);
 
         // Subscribe to auth changes (sign-in/out/token refresh)
         const { data } = supabase.auth.onAuthStateChange(async () => {
@@ -69,7 +87,10 @@ export function AuthProvider({ children }) {
 
           setSession(nextSession);
           setUser(nextUser);
-          setIsAdmin(checkAdmin(nextSession));
+
+          const nextIsAdmin = await computeIsAdminFromAdminsTable(supabase, nextSession);
+          if (!mounted) return;
+          setIsAdmin(nextIsAdmin);
         });
 
         return () => data?.subscription?.unsubscribe?.();
@@ -95,11 +116,14 @@ export function AuthProvider({ children }) {
         setProfile(u ? { id: u.id, role: u.role, full_name: null } : null);
         setIsAdmin(Boolean(u && u.role === "admin"));
       } else {
-        // Supabase mode: refresh session and set isAdmin strictly from app_metadata.
+        // Supabase mode: refresh session and set isAdmin strictly from `public.admins`.
+        const supabase = dataService.getSupabaseClient?.();
         const { session: s, user: supaUser } = await dataService.getCurrentSession();
         setSession(s);
         setUser(supaUser);
-        setIsAdmin(checkAdmin(s));
+
+        const admin = await computeIsAdminFromAdminsTable(supabase, s);
+        setIsAdmin(admin);
       }
 
       return { error: null };

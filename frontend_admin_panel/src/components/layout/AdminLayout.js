@@ -16,7 +16,7 @@ export function AdminLayout({ children }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // EXACT FIX: isAdmin comes only from session.user.app_metadata.role === 'admin' (in Supabase mode)
+    // Admin gating uses ONLY useAuth().isAdmin (which is computed from `public.admins` in Supabase mode).
     if (!loading && (!user || !isAdmin)) {
       navigate("/admin", { replace: true });
     }
