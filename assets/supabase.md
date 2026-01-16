@@ -24,7 +24,7 @@ The Admin Portal supports a dedicated reset route and a **mandatory callback rou
 - The reset email link must redirect back to the SPA at:
   **`/auth/callback`** (MANDATORY)
 - The `/auth/callback` page lets Supabase parse tokens / code and then forwards to:
-  **`/reset-password`**
+  **`/reset-password`** (when a session exists), otherwise falls back to **`/`** (per required minimal implementation).
 - The `/reset-password` page prompts for a new password and calls:
   `supabase.auth.updateUser({ password })`
 - After success, the UI redirects the admin back to **`/admin`** (login screen).
