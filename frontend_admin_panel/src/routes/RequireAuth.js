@@ -142,7 +142,6 @@ export function RequireAuth({ user, children }) {
   const [loading, setLoading] = useState(Boolean(isSupa));
   const [error, setError] = useState("");
   const [sessionUser, setSessionUser] = useState(null); // Supabase auth user
-  const [profile, setProfile] = useState(null); // profiles row {id, role, full_name}
   const [attempt, setAttempt] = useState(0);
 
   // This becomes true if we hit the bounded timeout; used to show clearer blocked messaging.
@@ -152,12 +151,13 @@ export function RequireAuth({ user, children }) {
   const timeoutRef = useRef(null);
 
   const uid = sessionUser?.id || null;
-  const role = profile?.role ?? null;
+  const role = sessionUser?.app_metadata?.role ?? null;
 
   const canAccess = useMemo(() => {
     if (!isSupa) return Boolean(user); // keep existing fallback behavior
-    return Boolean(profile && profile.role === "admin");
-  }, [isSupa, user, profile]);
+    // EXACT FIX: admin comes only from app_metadata.role
+    return sessionUser?.app_metadata?.role === "admin";
+  }, [isSupa, user, sessionUser]);
 
   const decision = useMemo(() => {
     if (!isSupa) return user ? "allow" : "deny";
@@ -186,8 +186,8 @@ export function RequireAuth({ user, children }) {
 
   const debugState = useMemo(() => {
     let note = "";
-    if (timedOut) note = "Timeout waiting for session/profile; showing best-known values.";
-    else if (isSupa && loading) note = "Waiting for Supabase session + profile…";
+    if (timedOut) note = "Timeout waiting for session; showing best-known values.";
+    else if (isSupa && loading) note = "Waiting for Supabase session…";
     return { uid, role: role || "unknown", loading, decision: canAccess ? "allow" : "deny", note };
   }, [uid, role, loading, canAccess, timedOut, isSupa]);
 
@@ -235,9 +235,9 @@ export function RequireAuth({ user, children }) {
         setLoading(false);
         logDebug({
           uid: sessionUser?.id || null,
-          role: profile?.role || null,
+          role: sessionUser?.app_metadata?.role || null,
           hasSession: Boolean(sessionUser),
-          note: "Timed out waiting for session/profile.",
+          note: "Timed out waiting for session.",
         });
       }, 7000);
 
@@ -253,21 +253,13 @@ export function RequireAuth({ user, children }) {
 
         setSessionUser(sUser || null);
 
-        // Not authenticated -> no profile to fetch.
-        if (!sUser) {
-          setProfile(null);
-          return;
-        }
+        // Not authenticated -> stop here.
+        if (!sUser) return;
 
-        // 2) Fetch profile for auth.uid()
-        const p = await dataService.getCurrentProfile();
-        setProfile(p);
-
-        // Debug: profile resolved
-        logDebug({ uid: currentUid, role: p?.role || null, hasSession });
+        // EXACT FIX: no profile/DB lookup; role is taken from app_metadata only.
+        logDebug({ uid: currentUid, role: sUser?.app_metadata?.role || null, hasSession });
       } catch (e) {
         setSessionUser(null);
-        setProfile(null);
         setError(e?.message || "Could not verify your access. Please try again.");
       } finally {
         // If timeout already fired, keep its state (but clear the timer).
@@ -284,7 +276,7 @@ export function RequireAuth({ user, children }) {
       }
     },
     // Intentionally include these so timeout log reflects latest known values
-    [supabase, attempt, sessionUser, profile]
+    [supabase, attempt, sessionUser]
   );
 
   useEffect(() => {
@@ -344,16 +336,11 @@ export function RequireAuth({ user, children }) {
   // Supabase mode: if not authenticated, send to login
   if (!sessionUser) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
 
-  // Supabase mode: authenticated but profile missing or not admin -> block
+  // Supabase mode: authenticated but not admin -> block
   if (!canAccess) {
-    // Keep the existing message wording for non-admins.
     const detail =
       error ||
-      (profile
-        ? `Your account role is '${profile.role || "unknown"}'. This portal is for admins only.`
-        : timedOut
-          ? "Timed out waiting for your profile. This can happen if the profile row doesn't exist, RLS blocks reads, or the session isn't persisting."
-          : "We couldn't load your profile. This can happen if the profile row doesn't exist or access is restricted.");
+      `Your account role is '${sessionUser?.app_metadata?.role || "unknown"}'. This portal is for admins only.`;
 
     return (
       <Blocked

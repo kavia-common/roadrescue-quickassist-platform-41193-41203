@@ -48,6 +48,12 @@ export function AdminAuth() {
   useEffect(() => {
     // If already signed in and admin, go straight to dashboard.
     if (!loading && user && isAdmin) {
+      // TEMP DEBUG CHECK (as requested)
+      console.log("ADMIN CHECK", {
+        email: user?.email,
+        appMetadata: user?.app_metadata,
+      });
+
       navigate("/admin/dashboard", { replace: true });
     }
   }, [user, isAdmin, loading, navigate]);
