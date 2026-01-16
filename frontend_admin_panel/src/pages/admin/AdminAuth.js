@@ -39,11 +39,19 @@ export function AdminAuth() {
     // Supabase password recovery typically returns with URL fragments like:
     // - #access_token=...&type=recovery
     // or query params depending on configuration.
+    //
+    // We treat either as "recovery mode" and show the "set new password" UI.
     const hash = window.location.hash || "";
     const search = window.location.search || "";
+    const lowerHash = hash.toLowerCase();
+    const lowerSearch = search.toLowerCase();
+
     const hasRecovery =
-      hash.toLowerCase().includes("type=recovery") ||
-      search.toLowerCase().includes("type=recovery");
+      lowerHash.includes("type=recovery") ||
+      lowerSearch.includes("type=recovery") ||
+      // Some configurations may return `type=recovery` without the explicit prefix, so this is an extra guard.
+      lowerHash.includes("recovery") ||
+      lowerSearch.includes("recovery");
 
     if (hasRecovery) {
       setMode("setNewPassword");
@@ -123,10 +131,9 @@ export function AdminAuth() {
         return;
       }
 
-      // Clear hash so reloading doesn't keep the recovery UI.
-      if (window.location.hash) {
-        window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
-      }
+      // Clear hash + query so reloading doesn't keep the recovery UI.
+      // (Supabase may return `type=recovery` in either location.)
+      window.history.replaceState(null, document.title, window.location.pathname);
 
       setNewPassword("");
       setConfirmNewPassword("");
