@@ -11,13 +11,17 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.26.2",
     "react-scripts": "5.0.1",
-    "tslib": "^2.6.0"
+    "tslib": "^2.6.0",
+
+    "caniuse-lite": "1.0.30001764",
+    "browserslist": "4.28.1"
   },
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "browserslist:update": "npx update-browserslist-db@1.2.3 --yes"
   },
   "eslintConfig": {
     "extends": "react-app"
@@ -37,5 +41,9 @@
   "devDependencies": {
     "cross-env": "^7.0.3",
     "html-webpack-plugin": "^5.5.3"
+  },
+  "overrides": {
+    "caniuse-lite": "1.0.30001764",
+    "browserslist": "4.28.1"
   }
 }
