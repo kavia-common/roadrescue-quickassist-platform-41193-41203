@@ -1,0 +1,237 @@
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { dataService } from "../services/dataService";
+
+/**
+ * This hook/provider is an adapter layer that:
+ * - Keeps mock/localStorage mode working (no Supabase env)
+ * - Uses Supabase session when configured
+ * - Exposes a simple "isAdmin" boolean for UI gating (AdminLayout/AdminAuth)
+ *
+ * IMPORTANT (per attached requirements):
+ * - In Supabase mode, admin is derived ONLY from `public.admins` table.
+ * - Completely remove all checks against app_metadata.role and profiles.role for admin access.
+ */
+
+const AuthContext = createContext(undefined);
+
+function isNoRowsFoundError(error) {
+  // supabase-js v2 returns PostgREST errors with a "code" string.
+  // For .single(), "PGRST116" is commonly used to represent "0 rows" (or not exactly 1).
+  // We treat "no row" as not admin (not an error that should log loudly).
+  const code = error?.code || "";
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "PGRST116" || msg.includes("0 rows");
+}
+
+/**
+ * PUBLIC_INTERFACE
+ */
+async function computeIsAdminFromAdminsTable(supabase, session) {
+  /**
+   * Returns true iff a row exists in `public.admins` for the current user.
+   *
+   * Required logic (exact semantics):
+   * supabase
+   *   .from('admins')
+   *   .select('user_id')
+   *   .eq('user_id', session.user.id)
+   *   .single()
+   */
+  if (!supabase) return false;
+
+  const userId = session?.user?.id;
+  if (!userId) return false;
+
+  const { data, error } = await supabase.from("admins").select("user_id").eq("user_id", userId).single();
+
+  if (error) {
+    // If no row exists => NOT admin (no warnings needed).
+    if (isNoRowsFoundError(error)) return false;
+
+    // Any other error: fail closed (deny admin) but log for debugging.
+    console.warn("[useAuth] admin check failed; denying admin access:", error?.message || error);
+    return false;
+  }
+
+  return Boolean(data);
+}
+
+// PUBLIC_INTERFACE
+export function AuthProvider({ children }) {
+  /** Provides auth state and helpers (signIn/signOut/isAdmin) to the admin panel. */
+  const [user, setUser] = useState(null); // Supabase auth user (or mock user minimal shape)
+  const [session, setSession] = useState(null); // Supabase session when configured
+  const [loading, setLoading] = useState(true);
+
+  // NOTE: kept for backwards compatibility with existing UI, but NOT used for admin gating.
+  const [profile, setProfile] = useState(null); // { id, role, full_name } or null
+
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const supabaseConfigured = useMemo(() => dataService.isSupabaseConfigured?.(), []);
+
+  useEffect(() => {
+    let mounted = true;
+    let unsubscribe = null;
+
+    (async () => {
+      setLoading(true);
+      try {
+        if (!supabaseConfigured) {
+          // Mock mode: preserve old behavior (admin via mock user's role).
+          const u = await dataService.getCurrentUser();
+          if (!mounted) return;
+          setUser(u);
+          setSession(null);
+          setProfile(u ? { id: u.id, role: u.role, full_name: null } : null);
+          setIsAdmin(Boolean(u && u.role === "admin"));
+          return;
+        }
+
+        // Supabase mode
+        const supabase = dataService.getSupabaseClient?.();
+        const { session: s, user: u } = await dataService.getCurrentSession();
+        if (!mounted) return;
+
+        setSession(s);
+        setUser(u);
+
+        // Admin gating: ONLY via `public.admins` lookup (no app_metadata/profile fallbacks).
+        const admin = await computeIsAdminFromAdminsTable(supabase, s);
+        if (!mounted) return;
+        setIsAdmin(admin);
+
+        // Subscribe to auth changes (sign-in/out/token refresh)
+        const { data } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
+          if (!mounted) return;
+
+          // Use the session passed by the callback (avoid extra round-trips),
+          // but still align user shape with our state.
+          const nextUser = nextSession?.user || null;
+
+          setSession(nextSession || null);
+          setUser(nextUser);
+
+          // On auth/session change, determine isAdmin ONLY via one SELECT on public.admins.
+          const nextIsAdmin = await computeIsAdminFromAdminsTable(supabase, nextSession);
+          if (!mounted) return;
+          setIsAdmin(nextIsAdmin);
+        });
+
+        unsubscribe = () => data?.subscription?.unsubscribe?.();
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      unsubscribe?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // PUBLIC_INTERFACE
+  const signIn = async (email, password) => {
+    /** Signs in using either Supabase auth or mock localStorage mode. */
+    try {
+      const u = await dataService.login(email, password);
+
+      if (!supabaseConfigured) {
+        setUser(u);
+        setProfile(u ? { id: u.id, role: u.role, full_name: null } : null);
+        setIsAdmin(Boolean(u && u.role === "admin"));
+      } else {
+        // Supabase mode: refresh session and set isAdmin strictly from `public.admins`.
+        const supabase = dataService.getSupabaseClient?.();
+        const { session: s, user: supaUser } = await dataService.getCurrentSession();
+        setSession(s);
+        setUser(supaUser);
+
+        const admin = await computeIsAdminFromAdminsTable(supabase, s);
+        setIsAdmin(admin);
+      }
+
+      return { error: null };
+    } catch (e) {
+      return { error: new Error(e?.message || "Login failed.") };
+    }
+  };
+
+  // PUBLIC_INTERFACE
+  const signOut = async () => {
+    /** Signs out and clears local auth state. */
+    await dataService.logout();
+    setUser(null);
+    setSession(null);
+    setProfile(null);
+    setIsAdmin(false);
+  };
+
+  // PUBLIC_INTERFACE
+  const requestPasswordReset = async (email) => {
+    /** Starts Supabase password reset flow (sends email). */
+    try {
+      await dataService.requestPasswordReset(email);
+      return { error: null };
+    } catch (e) {
+      return { error: new Error(e?.message || "Could not start password reset.") };
+    }
+  };
+
+  // PUBLIC_INTERFACE
+  const updatePassword = async (newPassword) => {
+    /** Completes password reset by setting a new password for the currently authenticated user. */
+    try {
+      await dataService.updatePassword(newPassword);
+      return { error: null };
+    } catch (e) {
+      return { error: new Error(e?.message || "Could not update password.") };
+    }
+  };
+
+  // PUBLIC_INTERFACE
+  const signInWithGoogle = async () => {
+    /**
+     * Starts Google OAuth flow via Supabase.
+     * Note: this will redirect the browser away; it may not return control to this function.
+     */
+    try {
+      await dataService.signInWithGoogle();
+      return { error: null };
+    } catch (e) {
+      return { error: new Error(e?.message || "Could not start Google sign-in.") };
+    }
+  };
+
+  const value = useMemo(
+    () => ({
+      user,
+      session,
+      profile,
+      loading,
+      signIn,
+      signOut,
+      requestPasswordReset,
+      updatePassword,
+      signInWithGoogle,
+      isAdmin,
+
+      // Backwards-compat flags from the attachment (not used in this admin panel, but exposed).
+      isMechanic: false,
+      mechanicStatus: null,
+      signUp: async () => ({ error: new Error("Not implemented in admin panel.") }),
+    }),
+    [user, session, profile, loading, isAdmin]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+// PUBLIC_INTERFACE
+export function useAuth() {
+  /** Access auth state/helpers; must be used within <AuthProvider>. */
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
+  return ctx;
+}

@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseClient, isSupabaseConfigured as isSupabaseConfiguredShared } from "../integrations/supabase/client";
 import { normalizeStatus } from "./statusUtils";
 
 const LS_KEYS = {
@@ -31,10 +31,17 @@ function ensureSeedData() {
   const seeded = readJson(LS_KEYS.seeded, false);
   if (seeded) return;
 
+  // Mock-mode seed data only (NO admin seed; admin must authenticate via Supabase in Supabase mode).
   const users = [
     { id: uid("u"), email: "user@example.com", password: "password123", role: "user", approved: true },
-    { id: uid("m"), email: "mech@example.com", password: "password123", role: "mechanic", approved: false, profile: { name: "Alex Mechanic", serviceArea: "Downtown" } },
-    { id: uid("a"), email: "admin@example.com", password: "password123", role: "admin", approved: true },
+    {
+      id: uid("m"),
+      email: "mech@example.com",
+      password: "password123",
+      role: "mechanic",
+      approved: false,
+      profile: { name: "Alex Mechanic", serviceArea: "Downtown" },
+    },
   ];
 
   const now = new Date().toISOString();
@@ -73,28 +80,9 @@ function ensureSeedData() {
   writeJson(LS_KEYS.seeded, true);
 }
 
-function getSupabaseEnv() {
-  const url = process.env.REACT_APP_SUPABASE_URL;
-  const key = process.env.REACT_APP_SUPABASE_KEY;
-  return { url, key };
-}
-
-// PUBLIC_INTERFACE
-function isSupabaseConfigured() {
-  /** Returns true only when required REACT_APP_ Supabase env vars are present (React build-time). */
-  const { url, key } = getSupabaseEnv();
-  return Boolean(url && key);
-}
-
 function getSupabase() {
-  const { url, key } = getSupabaseEnv();
-  if (!url || !key) return null;
-
-  try {
-    return createClient(url, key);
-  } catch {
-    return null;
-  }
+  // Centralized singleton Supabase client.
+  return getSupabaseClient();
 }
 
 function getLocalSession() {
@@ -141,18 +129,26 @@ async function supaGetUserRole(supabase, userId, email) {
 
 async function supaGetProfile(supabase, userId, email) {
   try {
-    const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").eq("id", userId).maybeSingle();
+    // IMPORTANT:
+    // - Do NOT select non-existent columns like `profile` or nested `profiles.profile`.
+    // - Always select explicit columns that exist on `public.profiles`.
+    const profileSelect =
+      "id, full_name, email, phone, role, status, mechanic_status, specialization, service_area, approved, approved_at, created_at";
+
+    const { data, error } = await supabase.from("profiles").select(profileSelect).eq("id", userId).maybeSingle();
     if (error) throw error;
+
     if (!data) {
       // Create a default profile row if missing; policies should allow self-insert by id=auth.uid().
       const { data: inserted, error: insertError } = await supabase
         .from("profiles")
         .insert({ id: userId, email, role: "user", approved: true })
-        .select("id,email,role,approved,profile")
+        .select(profileSelect)
         .maybeSingle();
       if (insertError) throw insertError;
       return inserted || null;
     }
+
     return data;
   } catch (e) {
     // Let caller decide how to surface errors.
@@ -210,6 +206,8 @@ export const dataService = {
     /**
      * Fetches the current user's profile from `public.profiles` where id = auth.uid().
      * Returns a minimal shape: { id, role, full_name } (null when not authenticated / not configured).
+     *
+     * NOTE: This is NOT used for admin gating (admin gating is public.admins only).
      */
     const supabase = getSupabase();
     if (!supabase) return null;
@@ -218,11 +216,7 @@ export const dataService = {
     if (!session || !user) return null;
 
     // IMPORTANT: Fetch by uid explicitly (not by email) to match RLS policies and the requirement.
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,role,full_name")
-      .eq("id", user.id)
-      .maybeSingle();
+    const { data, error } = await supabase.from("profiles").select("id,role,full_name").eq("id", user.id).maybeSingle();
 
     if (error) throw new Error(error.message || "Could not load profile.");
     return data ? { id: data.id, role: data.role || null, full_name: data.full_name || null } : null;
@@ -292,21 +286,103 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async login(email, password) {
+    /**
+     * Supabase-only auth enforcement (when configured):
+     * - If Supabase env vars are present, we DO NOT fall back to local/mock auth.
+     * - This ensures the admin can only log in via Supabase Auth.
+     */
     ensureSeedData();
     const supabase = getSupabase();
+
     if (supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(error.message || "Invalid email or password.");
+
       const user = data.user;
       const roleInfo = await supaGetUserRole(supabase, user.id, user.email);
       return { id: user.id, email: user.email, role: roleInfo.role, approved: roleInfo.approved };
     }
 
+    // Mock mode remains available only when Supabase is NOT configured.
     const users = getLocalUsers();
     const match = users.find((u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password);
     if (!match) throw new Error("Invalid email or password.");
     setLocalSession({ userId: match.id });
     return { id: match.id, email: match.email, role: match.role, approved: match.approved };
+  },
+
+  // PUBLIC_INTERFACE
+  async signInWithGoogle() {
+    /**
+     * Starts a Google OAuth sign-in using Supabase.
+     *
+     * IMPORTANT:
+     * - Requires Supabase dashboard config:
+     *   Authentication -> Providers -> Google enabled, with valid client ID/secret.
+     * - Requires allowed Redirect URLs to include:
+     *   - ${REACT_APP_FRONTEND_URL}/auth/callback
+     *
+     * Behavior:
+     * - In Supabase mode, this triggers a full-page redirect to Google.
+     * - On return to /auth/callback, we route to /reset-password or / (existing behavior).
+     * - AdminAuth also performs an auth/admin check and will redirect admin users to /admin/dashboard.
+     */
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase is not configured.");
+
+    const baseUrl = process.env.REACT_APP_FRONTEND_URL || window.location.origin;
+    const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/auth/callback`;
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo,
+      },
+    });
+
+    if (error) throw new Error(error.message || "Could not start Google sign-in.");
+    return data;
+  },
+
+  // PUBLIC_INTERFACE
+  async requestPasswordReset(email) {
+    /**
+     * Sends a Supabase password reset email.
+     *
+     * IMPORTANT:
+     * - The redirect URL must be allowed in Supabase Auth → URL Configuration → Redirect URLs.
+     * - The reset email link MUST return to a real frontend route.
+     *
+     * Env:
+     * - REACT_APP_FRONTEND_URL should be set to the deployed frontend origin (e.g. https://admin.example.com)
+     *   so the reset link returns to this app.
+     */
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase is not configured.");
+
+    const baseUrl = process.env.REACT_APP_FRONTEND_URL || window.location.origin;
+
+    // IMPORTANT:
+    // Supabase expects the app to handle auth callbacks. We route reset emails to /auth/callback
+    // and then forward to /reset-password once Supabase has parsed tokens / code.
+    const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/auth/callback`;
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) throw new Error(error.message || "Could not start password reset.");
+    return true;
+  },
+
+  // PUBLIC_INTERFACE
+  async updatePassword(newPassword) {
+    /**
+     * Updates the current user's password (used after following a reset email link).
+     */
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase is not configured.");
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(error.message || "Could not update password.");
+    return true;
   },
 
   // PUBLIC_INTERFACE
@@ -344,11 +420,33 @@ export const dataService = {
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").order("email", { ascending: true });
+      // IMPORTANT: Approved select pattern:
+      // - Do NOT select non-existent columns like `profile`.
+      // - Always select explicit columns from `profiles`.
+      const profileSelect =
+        "id, full_name, email, phone, role, status, mechanic_status, specialization, service_area, approved, approved_at, created_at";
+
+      const { data, error } = await supabase.from("profiles").select(profileSelect).order("email", { ascending: true });
+
       if (error) throw new Error(error.message);
-      return (data || []).map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
+
+      return (data || []).map((u) => ({
+        id: u.id,
+        email: u.email,
+        full_name: u.full_name || null,
+        phone: u.phone || null,
+        role: u.role,
+        status: u.status ?? null,
+        mechanic_status: u.mechanic_status ?? null,
+        specialization: u.specialization ?? null,
+        service_area: u.service_area ?? null,
+        approved: u.approved ?? false,
+        approved_at: u.approved_at ?? null,
+        created_at: u.created_at ?? null,
+      }));
     }
 
+    // Mock mode: keep legacy seeded shape.
     return getLocalUsers().map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
   },
 
@@ -375,21 +473,60 @@ export const dataService = {
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from("requests").select("*").order("created_at", { ascending: false });
+      /**
+       * IMPORTANT (alternate query pattern):
+       * - Do NOT rely on PostgREST relationship projections like `profiles (...)`.
+       * - Instead: select explicit fields from `requests`, then "manual join" profiles by user_id.
+       *
+       * This works even if no foreign key / relationship is established between requests.user_id and profiles.id.
+       */
+      const requestSelect =
+        "id, status, created_at, user_id, user_email, vehicle, issue_description, contact, assigned_mechanic_id, assigned_mechanic_email, notes";
+
+      const { data: rows, error } = await supabase.from("requests").select(requestSelect).order("created_at", { ascending: false });
+
       if (error) throw new Error(error.message);
-      return (data || []).map((r) => ({
-        id: r.id,
-        createdAt: r.created_at,
-        userId: r.user_id,
-        userEmail: r.user_email,
-        vehicle: r.vehicle,
-        issueDescription: r.issue_description,
-        contact: r.contact,
-        status: normalizeStatus(r.status),
-        assignedMechanicId: r.assigned_mechanic_id,
-        assignedMechanicEmail: r.assigned_mechanic_email,
-        notes: r.notes || [],
-      }));
+
+      const requestRows = rows || [];
+
+      // Manual join: fetch profiles for the distinct request user IDs.
+      // If RLS prevents reading profiles, we fall back to stored user_email on requests.
+      const userIds = Array.from(new Set(requestRows.map((r) => r.user_id).filter(Boolean)));
+
+      let profilesById = new Map();
+      if (userIds.length) {
+        const { data: profiles, error: profilesError } = await supabase
+          .from("profiles")
+          .select("id, email, full_name, phone")
+          .in("id", userIds);
+
+        if (profilesError) {
+          // Fail soft: admin pages still render using requests.user_email when profiles can't be read.
+          console.warn("[dataService.listRequests] Could not load profiles for join; falling back to requests.user_email:", profilesError?.message || profilesError);
+        } else {
+          profilesById = new Map((profiles || []).map((p) => [p.id, p]));
+        }
+      }
+
+      // Return shape MUST match frontend expectations used across Dashboard/Requests/Analytics pages.
+      return requestRows.map((r) => {
+        const profile = profilesById.get(r.user_id) || null;
+
+        return {
+          id: r.id,
+          createdAt: r.created_at,
+          userId: r.user_id,
+          // Prefer profile email if available; fallback to stored user_email.
+          userEmail: profile?.email || r.user_email,
+          vehicle: r.vehicle,
+          issueDescription: r.issue_description,
+          contact: r.contact,
+          status: normalizeStatus(r.status),
+          assignedMechanicId: r.assigned_mechanic_id,
+          assignedMechanicEmail: r.assigned_mechanic_email,
+          notes: r.notes || [],
+        };
+      });
     }
 
     return getLocalRequests()
@@ -452,11 +589,14 @@ export const dataService = {
   },
 
   // PUBLIC_INTERFACE
-  isSupabaseConfigured,
+  isSupabaseConfigured() {
+    /** Returns true only when required REACT_APP_ Supabase env vars are present (React build-time). */
+    return isSupabaseConfiguredShared();
+  },
 
   // PUBLIC_INTERFACE
   getSupabaseClient() {
-    /** Returns a Supabase client when configured, otherwise null (keeps mock/localStorage mode working). */
+    /** Returns the singleton Supabase client when configured, otherwise null (keeps mock/localStorage mode working). */
     return getSupabase();
   },
 
@@ -465,6 +605,8 @@ export const dataService = {
     /**
      * Loads the currently logged-in user's profile row from `public.profiles` (id = auth.uid()).
      * Returns null when not authenticated or when Supabase isn't configured.
+     *
+     * NOTE: This is NOT used for admin gating.
      */
     const supabase = getSupabase();
     if (!supabase) return null;
