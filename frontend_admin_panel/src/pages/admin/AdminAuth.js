@@ -1,18 +1,27 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
 import { useAuth } from "../../hooks/useAuth";
+import { dataService } from "../../services/dataService";
 
 /**
  * Admin-only login screen.
  * This replaces the previous generic LoginPage flow for the /admin route.
+ *
+ * Password reset/recovery notes (Supabase):
+ * - Email link can return with:
+ *    1) hash tokens: #access_token=...&type=recovery
+ *    2) query params: ?type=recovery&access_token=...
+ *    3) PKCE flow: ?code=... (requires exchangeCodeForSession)
+ *
+ * This component handles all three and provides a robust "set new password" UX.
  */
 
 // PUBLIC_INTERFACE
 export function AdminAuth() {
-  /** Admin portal login screen that signs in and then redirects to /admin/dashboard once admin is verified. */
+  /** Admin portal login + password reset/recovery handler. */
   const navigate = useNavigate();
   const { signIn, requestPasswordReset, updatePassword, user, isAdmin, loading } = useAuth();
 
@@ -26,38 +35,116 @@ export function AdminAuth() {
 
   // Password reset flow UI state
   const [mode, setMode] = useState("login"); // "login" | "requestReset" | "setNewPassword"
+
+  // Recovery: new password form
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
 
+  // Recovery: whether we've exchanged a `code` for a session (PKCE) and/or have a usable session.
+  const [recoveryReady, setRecoveryReady] = useState(false);
+
+  const supabaseConfigured = useMemo(() => dataService.isSupabaseConfigured?.(), []);
+
   useEffect(() => {
+    // If already signed in and admin, go straight to dashboard.
     if (!loading && user && isAdmin) {
       navigate("/admin/dashboard", { replace: true });
     }
   }, [user, isAdmin, loading, navigate]);
 
   useEffect(() => {
-    // Supabase password recovery typically returns with URL fragments like:
-    // - #access_token=...&type=recovery
-    // or query params depending on configuration.
-    //
-    // We treat either as "recovery mode" and show the "set new password" UI.
+    // Detect recovery mode from URL (hash OR query).
     const hash = window.location.hash || "";
     const search = window.location.search || "";
-    const lowerHash = hash.toLowerCase();
-    const lowerSearch = search.toLowerCase();
 
-    const hasRecovery =
-      lowerHash.includes("type=recovery") ||
-      lowerSearch.includes("type=recovery") ||
-      // Some configurations may return `type=recovery` without the explicit prefix, so this is an extra guard.
-      lowerHash.includes("recovery") ||
-      lowerSearch.includes("recovery");
+    const paramsFromHash = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+    const paramsFromSearch = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
 
-    if (hasRecovery) {
+    const type = (paramsFromSearch.get("type") || paramsFromHash.get("type") || "").toLowerCase();
+    const hasRecoveryType = type === "recovery";
+
+    const hasAccessToken = Boolean(paramsFromSearch.get("access_token") || paramsFromHash.get("access_token"));
+    const hasRefreshToken = Boolean(paramsFromSearch.get("refresh_token") || paramsFromHash.get("refresh_token"));
+
+    // PKCE flow often returns `?code=...`
+    const hasCode = Boolean(paramsFromSearch.get("code"));
+
+    const shouldEnterRecoveryUI = hasRecoveryType || hasAccessToken || hasCode || hasRefreshToken;
+
+    if (shouldEnterRecoveryUI) {
       setMode("setNewPassword");
-      setStatus({ type: "info", message: "Set a new password for your admin account." });
+      setStatus({
+        type: "info",
+        message: "Recovery link detected. Please set a new password to continue.",
+      });
     }
   }, []);
+
+  useEffect(() => {
+    // Robust recovery handling:
+    // - If Supabase returns with `?code=...`, exchange it for a session before calling updateUser().
+    // - If it returns with tokens in hash/query, Supabase JS may already initialize the session.
+    //
+    // We also show a helpful error if Supabase isn't configured (prevents confusing 404-ish outcomes).
+    if (mode !== "setNewPassword") return;
+
+    let cancelled = false;
+
+    (async () => {
+      if (!supabaseConfigured) {
+        setRecoveryReady(false);
+        setStatus({
+          type: "error",
+          message: "Supabase is not configured for this app. Password recovery cannot be completed.",
+        });
+        return;
+      }
+
+      const supabase = dataService.getSupabaseClient?.();
+      if (!supabase) {
+        setRecoveryReady(false);
+        setStatus({
+          type: "error",
+          message: "Supabase client is unavailable. Please check configuration and try again.",
+        });
+        return;
+      }
+
+      setBusy(true);
+      try {
+        const qs = new URLSearchParams(window.location.search.startsWith("?") ? window.location.search.slice(1) : window.location.search);
+        const code = qs.get("code");
+
+        if (code) {
+          // PKCE exchange
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw new Error(error.message || "Could not validate the recovery link.");
+        } else {
+          // For token-in-hash flows, try to resolve the session (Supabase JS will parse the URL on init).
+          // If there's no session, updatePassword will fail; we handle that with a clear message.
+          await dataService.getCurrentSession();
+        }
+
+        if (cancelled) return;
+        setRecoveryReady(true);
+      } catch (e) {
+        if (cancelled) return;
+        setRecoveryReady(false);
+        setStatus({
+          type: "error",
+          message:
+            e?.message ||
+            "Could not validate the recovery link. The link may be expired. Please request a new password reset email.",
+        });
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, supabaseConfigured]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -122,6 +209,12 @@ export function AdminAuth() {
     if (newPassword !== confirmNewPassword) {
       return setStatus({ type: "error", message: "Passwords do not match." });
     }
+    if (!recoveryReady) {
+      return setStatus({
+        type: "error",
+        message: "Recovery session is not ready. Please open the recovery link again, or request a new password reset email.",
+      });
+    }
 
     setBusy(true);
     try {
@@ -131,14 +224,15 @@ export function AdminAuth() {
         return;
       }
 
-      // Clear hash + query so reloading doesn't keep the recovery UI.
-      // (Supabase may return `type=recovery` in either location.)
-      window.history.replaceState(null, document.title, window.location.pathname);
+      // Remove hash/query to prevent "recovery" mode sticking on refresh.
+      // Keep the user on /admin, then navigate to /admin/dashboard (as requested).
+      window.history.replaceState(null, document.title, "/admin");
 
       setNewPassword("");
       setConfirmNewPassword("");
-      setMode("login");
-      setStatus({ type: "info", message: "Password updated. Please sign in with your new password." });
+
+      setStatus({ type: "info", message: "Password updated. Redirecting to dashboard…" });
+      navigate("/admin/dashboard", { replace: true });
     } catch (err) {
       setStatus({ type: "error", message: err?.message || "An unexpected error occurred." });
     } finally {
@@ -252,9 +346,18 @@ export function AdminAuth() {
             </form>
           ) : (
             <form className="form" onSubmit={submitSetNewPassword}>
-              <div className="alert alert-info">
-                You opened a Supabase recovery link. Set your new password below, then sign in normally.
+              <div className="alert alert-info" style={{ display: "grid", gap: 8 }}>
+                <div>You opened a Supabase recovery link.</div>
+                <div style={{ fontSize: 13, opacity: 0.95 }}>
+                  Set a new password below. If the link is expired, go back and request a new reset email.
+                </div>
               </div>
+
+              {!recoveryReady ? (
+                <div className={`alert ${status.type === "error" ? "alert-error" : "alert-info"}`}>
+                  {busy ? "Validating recovery link…" : status.message || "Preparing recovery session…"}
+                </div>
+              ) : null}
 
               <Input
                 label="New password"
@@ -264,6 +367,7 @@ export function AdminAuth() {
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
                 hint="Minimum 6 characters (Supabase default)."
+                disabled={busy || !recoveryReady}
               />
               <Input
                 label="Confirm new password"
@@ -272,6 +376,7 @@ export function AdminAuth() {
                 value={confirmNewPassword}
                 onChange={(e) => setConfirmNewPassword(e.target.value)}
                 required
+                disabled={busy || !recoveryReady}
               />
 
               {status.message ? (
@@ -279,7 +384,7 @@ export function AdminAuth() {
               ) : null}
 
               <div className="row">
-                <Button type="submit" disabled={busy}>
+                <Button type="submit" disabled={busy || !recoveryReady}>
                   {busy ? "Updating..." : "Update password"}
                 </Button>
                 <Button
@@ -287,11 +392,24 @@ export function AdminAuth() {
                   variant="ghost"
                   disabled={busy}
                   onClick={() => {
+                    // Best-effort: remove recovery params and go back to login UI.
+                    window.history.replaceState(null, document.title, "/admin");
                     setStatus({ type: "", message: "" });
                     setMode("login");
                   }}
                 >
                   Back to login
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    setStatus({ type: "", message: "" });
+                    setMode("requestReset");
+                  }}
+                >
+                  Request new link
                 </Button>
               </div>
             </form>

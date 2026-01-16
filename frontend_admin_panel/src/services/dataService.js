@@ -323,8 +323,8 @@ export const dataService = {
      * Sends a Supabase password reset email.
      *
      * IMPORTANT:
-     * - Requires Supabase Auth email templates configured in Supabase.
-     * - The redirect URL must be an allowed redirect URL in Supabase.
+     * - The redirect URL must be allowed in Supabase Auth → URL Configuration → Redirect URLs.
+     * - This admin panel expects the reset link to return to: /admin
      *
      * Env:
      * - REACT_APP_FRONTEND_URL should be set to the deployed frontend origin (e.g. https://admin.example.com)
@@ -333,10 +333,7 @@ export const dataService = {
     const supabase = getSupabase();
     if (!supabase) throw new Error("Supabase is not configured.");
 
-    const baseUrl =
-      process.env.REACT_APP_FRONTEND_URL ||
-      window.location.origin;
-
+    const baseUrl = process.env.REACT_APP_FRONTEND_URL || window.location.origin;
     const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/admin`;
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
