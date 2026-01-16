@@ -151,6 +151,20 @@ export function AuthProvider({ children }) {
     }
   };
 
+  // PUBLIC_INTERFACE
+  const signInWithGoogle = async () => {
+    /**
+     * Starts Google OAuth flow via Supabase.
+     * Note: this will redirect the browser away; it may not return control to this function.
+     */
+    try {
+      await dataService.signInWithGoogle();
+      return { error: null };
+    } catch (e) {
+      return { error: new Error(e?.message || "Could not start Google sign-in.") };
+    }
+  };
+
   const value = useMemo(
     () => ({
       user,
@@ -161,13 +175,13 @@ export function AuthProvider({ children }) {
       signOut,
       requestPasswordReset,
       updatePassword,
+      signInWithGoogle,
       isAdmin,
 
       // Backwards-compat flags from the attachment (not used in this admin panel, but exposed).
       isMechanic: false,
       mechanicStatus: null,
       signUp: async () => ({ error: new Error("Not implemented in admin panel.") }),
-      signInWithGoogle: async () => ({ error: new Error("Not implemented in admin panel.") }),
     }),
     [user, session, profile, loading, isAdmin]
   );

@@ -34,7 +34,20 @@ export function AuthCallbackPage() {
     supabase.auth.getSession().then(({ data }) => {
       if (data?.session) {
         // If this was password reset → go to reset screen
-        window.location.href = "/reset-password";
+        const hash = window.location.hash || "";
+        const search = window.location.search || "";
+        const paramsFromHash = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+        const paramsFromSearch = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+        const type = (paramsFromSearch.get("type") || paramsFromHash.get("type") || "").toLowerCase();
+
+        // For recovery links, keep existing required behavior.
+        if (type === "recovery") {
+          window.location.href = "/reset-password";
+          return;
+        }
+
+        // For OAuth logins, go to the admin dashboard route group.
+        window.location.href = "/admin/dashboard";
       } else {
         // Fallback
         window.location.href = "/";

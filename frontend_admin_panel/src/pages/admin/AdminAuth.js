@@ -23,7 +23,7 @@ import { dataService } from "../../services/dataService";
 export function AdminAuth() {
   /** Admin portal login + password reset/recovery handler. */
   const navigate = useNavigate();
-  const { signIn, requestPasswordReset, updatePassword, user, isAdmin, loading } = useAuth();
+  const { signIn, signInWithGoogle, requestPasswordReset, updatePassword, user, isAdmin, loading } = useAuth();
 
   // Default email is set for convenience; do not prefill password.
   const [email, setEmail] = useState("shanmugasundaramdm@gmail.com");
@@ -201,6 +201,23 @@ export function AdminAuth() {
     }
   };
 
+  const onGoogleSignIn = async () => {
+    setStatus({ type: "", message: "" });
+    setBusy(true);
+    try {
+      const { error } = await signInWithGoogle();
+      if (error) {
+        setStatus({ type: "error", message: error.message || "Could not start Google sign-in." });
+        return;
+      }
+
+      // Typically, the browser redirects away immediately; this is a fallback message.
+      setStatus({ type: "info", message: "Redirecting to Google…" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submitSetNewPassword = async (e) => {
     e.preventDefault();
     setStatus({ type: "", message: "" });
@@ -298,6 +315,26 @@ export function AdminAuth() {
                   {busy ? "Signing in..." : "Sign in"}
                 </Button>
               </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy}
+                onClick={onGoogleSignIn}
+                style={{
+                  width: "100%",
+                  justifyContent: "center",
+                  marginTop: 10,
+                  paddingTop: 12,
+                  paddingBottom: 12,
+                  fontSize: 15,
+                  fontWeight: 1000,
+                  borderColor: "rgba(37,99,235,0.20)",
+                  background: "linear-gradient(180deg, rgba(37,99,235,0.06), rgba(255,255,255,0))",
+                }}
+              >
+                Continue with Google
+              </Button>
 
               {/* FORCE VISIBILITY: always-visible, large, prominent button directly under Sign in. */}
               <Button

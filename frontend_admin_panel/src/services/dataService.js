@@ -321,6 +321,39 @@ export const dataService = {
   },
 
   // PUBLIC_INTERFACE
+  async signInWithGoogle() {
+    /**
+     * Starts a Google OAuth sign-in using Supabase.
+     *
+     * IMPORTANT:
+     * - Requires Supabase dashboard config:
+     *   Authentication -> Providers -> Google enabled, with valid client ID/secret.
+     * - Requires allowed Redirect URLs to include:
+     *   - ${REACT_APP_FRONTEND_URL}/auth/callback
+     *
+     * Behavior:
+     * - In Supabase mode, this triggers a full-page redirect to Google.
+     * - On return to /auth/callback, we route to /reset-password or / (existing behavior).
+     * - AdminAuth also performs an auth/role check and will redirect admin users to /admin/dashboard.
+     */
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase is not configured.");
+
+    const baseUrl = process.env.REACT_APP_FRONTEND_URL || window.location.origin;
+    const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/auth/callback`;
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo,
+      },
+    });
+
+    if (error) throw new Error(error.message || "Could not start Google sign-in.");
+    return data;
+  },
+
+  // PUBLIC_INTERFACE
   async requestPasswordReset(email) {
     /**
      * Sends a Supabase password reset email.
