@@ -34,7 +34,7 @@ function ensureSeedData() {
   const users = [
     { id: uid("u"), email: "user@example.com", password: "password123", role: "user", approved: true },
     { id: uid("m"), email: "mech@example.com", password: "password123", role: "mechanic", approved: false, profile: { name: "Alex Mechanic", serviceArea: "Downtown" } },
-    { id: uid("a"), email: "admin@example.com", password: "password123", role: "admin", approved: true },
+    { id: uid("a"), email: "shanmugasundaramdm@gmail.com", password: "JananiMota26@", role: "admin", approved: true },
   ];
 
   const now = new Date().toISOString();

@@ -9,8 +9,8 @@ import { dataService } from "../services/dataService";
 export function LoginPage({ onAuthed }) {
   /** Admin login page. */
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@example.com");
-  const [password, setPassword] = useState("password123");
+  const [email, setEmail] = useState("shanmugasundaramdm@gmail.com");
+  const [password, setPassword] = useState("JananiMota26@");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
