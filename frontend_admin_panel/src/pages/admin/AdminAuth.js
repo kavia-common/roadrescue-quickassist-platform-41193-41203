@@ -292,23 +292,36 @@ export function AdminAuth() {
               ) : null}
 
               <div className="row">
-                <Button type="submit" disabled={busy}>
+                <Button type="submit" disabled={busy} style={{ width: "100%" }}>
                   {busy ? "Signing in..." : "Sign in"}
                 </Button>
-                <Button type="button" variant="ghost" disabled={busy} onClick={() => setStatus({ type: "", message: "" })}>
-                  Clear
-                </Button>
+              </div>
 
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => {
-                    setStatus({ type: "", message: "" });
-                    setMode("requestReset");
-                  }}
-                >
-                  Forgot password?
+              {/* Prominent placement: directly below Sign in (requested) */}
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => {
+                  setStatus({ type: "", message: "" });
+                  setMode("requestReset");
+                }}
+                style={{
+                  width: "100%",
+                  justifyContent: "center",
+                  marginTop: 10,
+                  border: "1px solid rgba(37,99,235,0.20)",
+                  background: "rgba(37,99,235,0.06)",
+                  boxShadow: "none",
+                  fontWeight: 1000,
+                }}
+              >
+                Forgot password?
+              </Button>
+
+              <div className="row" style={{ marginTop: 10 }}>
+                <Button type="button" variant="ghost" disabled={busy} onClick={() => setStatus({ type: "", message: "" })} style={{ width: "100%" }}>
+                  Clear
                 </Button>
               </div>
             </form>
