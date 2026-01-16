@@ -34,7 +34,7 @@ export function AdminAuth() {
   const [status, setStatus] = useState({ type: "", message: "" });
 
   // Password reset flow UI state
-  const [mode, setMode] = useState("login"); // "login" | "requestReset" | "setNewPassword"
+  const [mode, setMode] = useState("login"); // "login" | "setNewPassword"
 
   // Recovery: new password form
   const [newPassword, setNewPassword] = useState("");
@@ -174,11 +174,13 @@ export function AdminAuth() {
     }
   };
 
-  const submitResetRequest = async (e) => {
-    e.preventDefault();
+  const onForgotPassword = async () => {
     setStatus({ type: "", message: "" });
 
-    if (!email.trim()) return setStatus({ type: "error", message: "Email is required." });
+    if (!email.trim()) {
+      setStatus({ type: "error", message: "Enter your email above, then click Forgot password?." });
+      return;
+    }
 
     setBusy(true);
     try {
@@ -187,11 +189,11 @@ export function AdminAuth() {
         setStatus({ type: "error", message: error.message || "Could not start password reset." });
         return;
       }
+
       setStatus({
         type: "info",
-        message: "Password reset email sent (if the account exists). Check your inbox/spam, then follow the link to set a new password.",
+        message: "Reset email sent (if the account exists). Open the email link to continue at /auth/callback → /reset-password.",
       });
-      setMode("login");
     } catch (err) {
       setStatus({ type: "error", message: err?.message || "An unexpected error occurred." });
     } finally {
@@ -297,22 +299,19 @@ export function AdminAuth() {
                 </Button>
               </div>
 
-              {/* Prominent placement: directly below Sign in (requested) */}
+              {/* FORCE VISIBILITY: always-visible, large, prominent button directly under Sign in. */}
               <Button
                 type="button"
-                variant="ghost"
+                variant="secondary"
                 disabled={busy}
-                onClick={() => {
-                  setStatus({ type: "", message: "" });
-                  setMode("requestReset");
-                }}
+                onClick={onForgotPassword}
                 style={{
                   width: "100%",
                   justifyContent: "center",
-                  marginTop: 10,
-                  border: "1px solid rgba(37,99,235,0.20)",
-                  background: "rgba(37,99,235,0.06)",
-                  boxShadow: "none",
+                  marginTop: 12,
+                  paddingTop: 12,
+                  paddingBottom: 12,
+                  fontSize: 15,
                   fontWeight: 1000,
                 }}
               >
@@ -325,44 +324,12 @@ export function AdminAuth() {
                 </Button>
               </div>
             </form>
-          ) : mode === "requestReset" ? (
-            <form className="form" onSubmit={submitResetRequest}>
-              <Input
-                label="Email"
-                name="resetEmail"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                hint="We'll send a reset link if this email exists in Supabase Auth."
-              />
-
-              {status.message ? (
-                <div className={`alert ${status.type === "error" ? "alert-error" : "alert-info"}`}>{status.message}</div>
-              ) : null}
-
-              <div className="row">
-                <Button type="submit" disabled={busy}>
-                  {busy ? "Sending..." : "Send reset email"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => {
-                    setStatus({ type: "", message: "" });
-                    setMode("login");
-                  }}
-                >
-                  Back to login
-                </Button>
-              </div>
-            </form>
           ) : (
             <form className="form" onSubmit={submitSetNewPassword}>
               <div className="alert alert-info" style={{ display: "grid", gap: 8 }}>
                 <div>You opened a Supabase recovery link.</div>
                 <div style={{ fontSize: 13, opacity: 0.95 }}>
-                  Set a new password below. If the link is expired, go back and request a new reset email.
+                  Set a new password below. If the link is expired, go back to /admin and request a new reset email.
                 </div>
               </div>
 
@@ -412,17 +379,6 @@ export function AdminAuth() {
                   }}
                 >
                   Back to login
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => {
-                    setStatus({ type: "", message: "" });
-                    setMode("requestReset");
-                  }}
-                >
-                  Request new link
                 </Button>
               </div>
             </form>
