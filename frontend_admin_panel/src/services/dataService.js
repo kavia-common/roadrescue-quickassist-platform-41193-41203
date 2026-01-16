@@ -129,18 +129,26 @@ async function supaGetUserRole(supabase, userId, email) {
 
 async function supaGetProfile(supabase, userId, email) {
   try {
-    const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").eq("id", userId).maybeSingle();
+    // IMPORTANT: Avoid invalid selectors like `.select('profile')` or `profiles(profile)`.
+    // Always select explicit columns.
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id,email,full_name,role,approved,profile")
+      .eq("id", userId)
+      .maybeSingle();
     if (error) throw error;
+
     if (!data) {
       // Create a default profile row if missing; policies should allow self-insert by id=auth.uid().
       const { data: inserted, error: insertError } = await supabase
         .from("profiles")
         .insert({ id: userId, email, role: "user", approved: true })
-        .select("id,email,role,approved,profile")
+        .select("id,email,full_name,role,approved,profile")
         .maybeSingle();
       if (insertError) throw insertError;
       return inserted || null;
     }
+
     return data;
   } catch (e) {
     // Let caller decide how to surface errors.
@@ -412,9 +420,24 @@ export const dataService = {
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from("profiles").select("id,email,role,approved,profile").order("email", { ascending: true });
+      // IMPORTANT: Approved select pattern:
+      // - Do NOT select `profile` alone.
+      // - Always select explicit columns from `profiles`.
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id,email,full_name,role,approved,profile")
+        .order("email", { ascending: true });
+
       if (error) throw new Error(error.message);
-      return (data || []).map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
+
+      return (data || []).map((u) => ({
+        id: u.id,
+        email: u.email,
+        full_name: u.full_name || null,
+        role: u.role,
+        approved: u.approved,
+        profile: u.profile,
+      }));
     }
 
     return getLocalUsers().map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
