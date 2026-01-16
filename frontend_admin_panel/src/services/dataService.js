@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseClient, isSupabaseConfigured as isSupabaseConfiguredShared } from "../integrations/supabase/client";
 import { normalizeStatus } from "./statusUtils";
 
 const LS_KEYS = {
@@ -80,28 +80,9 @@ function ensureSeedData() {
   writeJson(LS_KEYS.seeded, true);
 }
 
-function getSupabaseEnv() {
-  const url = process.env.REACT_APP_SUPABASE_URL;
-  const key = process.env.REACT_APP_SUPABASE_KEY;
-  return { url, key };
-}
-
-// PUBLIC_INTERFACE
-function isSupabaseConfigured() {
-  /** Returns true only when required REACT_APP_ Supabase env vars are present (React build-time). */
-  const { url, key } = getSupabaseEnv();
-  return Boolean(url && key);
-}
-
 function getSupabase() {
-  const { url, key } = getSupabaseEnv();
-  if (!url || !key) return null;
-
-  try {
-    return createClient(url, key);
-  } catch {
-    return null;
-  }
+  // Centralized singleton Supabase client.
+  return getSupabaseClient();
 }
 
 function getLocalSession() {
@@ -217,6 +198,8 @@ export const dataService = {
     /**
      * Fetches the current user's profile from `public.profiles` where id = auth.uid().
      * Returns a minimal shape: { id, role, full_name } (null when not authenticated / not configured).
+     *
+     * NOTE: This is NOT used for admin gating (admin gating is public.admins only).
      */
     const supabase = getSupabase();
     if (!supabase) return null;
@@ -334,7 +317,7 @@ export const dataService = {
      * Behavior:
      * - In Supabase mode, this triggers a full-page redirect to Google.
      * - On return to /auth/callback, we route to /reset-password or / (existing behavior).
-     * - AdminAuth also performs an auth/role check and will redirect admin users to /admin/dashboard.
+     * - AdminAuth also performs an auth/admin check and will redirect admin users to /admin/dashboard.
      */
     const supabase = getSupabase();
     if (!supabase) throw new Error("Supabase is not configured.");
@@ -361,8 +344,6 @@ export const dataService = {
      * IMPORTANT:
      * - The redirect URL must be allowed in Supabase Auth → URL Configuration → Redirect URLs.
      * - The reset email link MUST return to a real frontend route.
-     *
-     * This admin panel expects the reset link to return to: /reset-password
      *
      * Env:
      * - REACT_APP_FRONTEND_URL should be set to the deployed frontend origin (e.g. https://admin.example.com)
@@ -539,11 +520,14 @@ export const dataService = {
   },
 
   // PUBLIC_INTERFACE
-  isSupabaseConfigured,
+  isSupabaseConfigured() {
+    /** Returns true only when required REACT_APP_ Supabase env vars are present (React build-time). */
+    return isSupabaseConfiguredShared();
+  },
 
   // PUBLIC_INTERFACE
   getSupabaseClient() {
-    /** Returns a Supabase client when configured, otherwise null (keeps mock/localStorage mode working). */
+    /** Returns the singleton Supabase client when configured, otherwise null (keeps mock/localStorage mode working). */
     return getSupabase();
   },
 
@@ -552,6 +536,8 @@ export const dataService = {
     /**
      * Loads the currently logged-in user's profile row from `public.profiles` (id = auth.uid()).
      * Returns null when not authenticated or when Supabase isn't configured.
+     *
+     * NOTE: This is NOT used for admin gating.
      */
     const supabase = getSupabase();
     if (!supabase) return null;
