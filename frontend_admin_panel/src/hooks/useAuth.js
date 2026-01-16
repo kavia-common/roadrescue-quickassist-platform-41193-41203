@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { dataService } from "../services/dataService";
 
 /**
@@ -132,31 +132,34 @@ export function AuthProvider({ children }) {
   }, []);
 
   // PUBLIC_INTERFACE
-  const signIn = async (email, password) => {
-    /** Signs in using either Supabase auth or mock localStorage mode. */
-    try {
-      const u = await dataService.login(email, password);
+  const signIn = useCallback(
+    async (email, password) => {
+      /** Signs in using either Supabase auth or mock localStorage mode. */
+      try {
+        const u = await dataService.login(email, password);
 
-      if (!supabaseConfigured) {
-        setUser(u);
-        setProfile(u ? { id: u.id, role: u.role, full_name: null } : null);
-        setIsAdmin(Boolean(u && u.role === "admin"));
-      } else {
-        // Supabase mode: refresh session and set isAdmin strictly from `public.admins`.
-        const supabase = dataService.getSupabaseClient?.();
-        const { session: s, user: supaUser } = await dataService.getCurrentSession();
-        setSession(s);
-        setUser(supaUser);
+        if (!supabaseConfigured) {
+          setUser(u);
+          setProfile(u ? { id: u.id, role: u.role, full_name: null } : null);
+          setIsAdmin(Boolean(u && u.role === "admin"));
+        } else {
+          // Supabase mode: refresh session and set isAdmin strictly from `public.admins`.
+          const supabase = dataService.getSupabaseClient?.();
+          const { session: s, user: supaUser } = await dataService.getCurrentSession();
+          setSession(s);
+          setUser(supaUser);
 
-        const admin = await computeIsAdminFromAdminsTable(supabase, s);
-        setIsAdmin(admin);
+          const admin = await computeIsAdminFromAdminsTable(supabase, s);
+          setIsAdmin(admin);
+        }
+
+        return { error: null };
+      } catch (e) {
+        return { error: new Error(e?.message || "Login failed.") };
       }
-
-      return { error: null };
-    } catch (e) {
-      return { error: new Error(e?.message || "Login failed.") };
-    }
-  };
+    },
+    [supabaseConfigured]
+  );
 
   // PUBLIC_INTERFACE
   const signOut = async () => {
@@ -222,7 +225,18 @@ export function AuthProvider({ children }) {
       mechanicStatus: null,
       signUp: async () => ({ error: new Error("Not implemented in admin panel.") }),
     }),
-    [user, session, profile, loading, isAdmin]
+    [
+      user,
+      session,
+      profile,
+      loading,
+      isAdmin,
+      signIn,
+      signOut,
+      requestPasswordReset,
+      updatePassword,
+      signInWithGoogle,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
