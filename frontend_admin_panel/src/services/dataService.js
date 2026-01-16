@@ -473,30 +473,60 @@ export const dataService = {
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      // IMPORTANT:
-      // Use an explicit join projection to profiles instead of selecting `*`.
-      // This avoids invalid selectors like `profiles.profile` and keeps payloads stable.
-      const { data, error } = await supabase
-        .from("requests")
-        .select("id, status, created_at, user_id, user_email, vehicle, issue_description, contact, assigned_mechanic_id, assigned_mechanic_email, notes, profiles (full_name, email, phone)")
-        .order("created_at", { ascending: false });
+      /**
+       * IMPORTANT (alternate query pattern):
+       * - Do NOT rely on PostgREST relationship projections like `profiles (...)`.
+       * - Instead: select explicit fields from `requests`, then "manual join" profiles by user_id.
+       *
+       * This works even if no foreign key / relationship is established between requests.user_id and profiles.id.
+       */
+      const requestSelect =
+        "id, status, created_at, user_id, user_email, vehicle, issue_description, contact, assigned_mechanic_id, assigned_mechanic_email, notes";
+
+      const { data: rows, error } = await supabase.from("requests").select(requestSelect).order("created_at", { ascending: false });
 
       if (error) throw new Error(error.message);
 
-      return (data || []).map((r) => ({
-        id: r.id,
-        createdAt: r.created_at,
-        userId: r.user_id,
-        // Prefer email from joined profile if present; fallback to stored user_email.
-        userEmail: r?.profiles?.email || r.user_email,
-        vehicle: r.vehicle,
-        issueDescription: r.issue_description,
-        contact: r.contact,
-        status: normalizeStatus(r.status),
-        assignedMechanicId: r.assigned_mechanic_id,
-        assignedMechanicEmail: r.assigned_mechanic_email,
-        notes: r.notes || [],
-      }));
+      const requestRows = rows || [];
+
+      // Manual join: fetch profiles for the distinct request user IDs.
+      // If RLS prevents reading profiles, we fall back to stored user_email on requests.
+      const userIds = Array.from(new Set(requestRows.map((r) => r.user_id).filter(Boolean)));
+
+      let profilesById = new Map();
+      if (userIds.length) {
+        const { data: profiles, error: profilesError } = await supabase
+          .from("profiles")
+          .select("id, email, full_name, phone")
+          .in("id", userIds);
+
+        if (profilesError) {
+          // Fail soft: admin pages still render using requests.user_email when profiles can't be read.
+          console.warn("[dataService.listRequests] Could not load profiles for join; falling back to requests.user_email:", profilesError?.message || profilesError);
+        } else {
+          profilesById = new Map((profiles || []).map((p) => [p.id, p]));
+        }
+      }
+
+      // Return shape MUST match frontend expectations used across Dashboard/Requests/Analytics pages.
+      return requestRows.map((r) => {
+        const profile = profilesById.get(r.user_id) || null;
+
+        return {
+          id: r.id,
+          createdAt: r.created_at,
+          userId: r.user_id,
+          // Prefer profile email if available; fallback to stored user_email.
+          userEmail: profile?.email || r.user_email,
+          vehicle: r.vehicle,
+          issueDescription: r.issue_description,
+          contact: r.contact,
+          status: normalizeStatus(r.status),
+          assignedMechanicId: r.assigned_mechanic_id,
+          assignedMechanicEmail: r.assigned_mechanic_email,
+          notes: r.notes || [],
+        };
+      });
     }
 
     return getLocalRequests()
