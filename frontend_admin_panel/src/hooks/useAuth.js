@@ -129,6 +129,28 @@ export function AuthProvider({ children }) {
     setIsAdmin(false);
   };
 
+  // PUBLIC_INTERFACE
+  const requestPasswordReset = async (email) => {
+    /** Starts Supabase password reset flow (sends email). */
+    try {
+      await dataService.requestPasswordReset(email);
+      return { error: null };
+    } catch (e) {
+      return { error: new Error(e?.message || "Could not start password reset.") };
+    }
+  };
+
+  // PUBLIC_INTERFACE
+  const updatePassword = async (newPassword) => {
+    /** Completes password reset by setting a new password for the currently authenticated user. */
+    try {
+      await dataService.updatePassword(newPassword);
+      return { error: null };
+    } catch (e) {
+      return { error: new Error(e?.message || "Could not update password.") };
+    }
+  };
+
   const value = useMemo(
     () => ({
       user,
@@ -137,6 +159,8 @@ export function AuthProvider({ children }) {
       loading,
       signIn,
       signOut,
+      requestPasswordReset,
+      updatePassword,
       isAdmin,
 
       // Backwards-compat flags from the attachment (not used in this admin panel, but exposed).

@@ -31,10 +31,10 @@ function ensureSeedData() {
   const seeded = readJson(LS_KEYS.seeded, false);
   if (seeded) return;
 
+  // Mock-mode seed data only (NO admin seed; admin must authenticate via Supabase in Supabase mode).
   const users = [
     { id: uid("u"), email: "user@example.com", password: "password123", role: "user", approved: true },
     { id: uid("m"), email: "mech@example.com", password: "password123", role: "mechanic", approved: false, profile: { name: "Alex Mechanic", serviceArea: "Downtown" } },
-    { id: uid("a"), email: "shanmugasundaramdm@gmail.com", password: "JananiMota26@", role: "admin", approved: true },
   ];
 
   const now = new Date().toISOString();
@@ -292,46 +292,69 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async login(email, password) {
+    /**
+     * Supabase-only auth enforcement (when configured):
+     * - If Supabase env vars are present, we DO NOT fall back to local/mock auth.
+     * - This ensures the admin can only log in via Supabase Auth.
+     */
     ensureSeedData();
     const supabase = getSupabase();
+
     if (supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw new Error(error.message || "Invalid email or password.");
 
-      /**
-       * If Supabase rejects the credentials, we *conditionally* fall back to mock mode
-       * for the one explicit admin account used in this MVP.
-       *
-       * Why:
-       * - The current Supabase project is returning "Invalid login credentials" for the provided admin.
-       * - That error originates from Supabase Auth (not from our role-gating/routing).
-       * - This fallback keeps the app usable while Supabase user/password is corrected server-side.
-       *
-       * Security note:
-       * - This is intentionally scoped to a single known admin email.
-       * - In a production system you should remove this and fix the Supabase Auth user instead.
-       */
-      if (error) {
-        const msg = String(error.message || "");
-        const isInvalidCreds = msg.toLowerCase().includes("invalid login credentials");
-        const isMvpAdmin = String(email || "").trim().toLowerCase() === "shanmugasundaramdm@gmail.com";
-
-        if (isInvalidCreds && isMvpAdmin) {
-          // Fall through to local/mock auth below.
-        } else {
-          throw new Error(error.message);
-        }
-      } else {
-        const user = data.user;
-        const roleInfo = await supaGetUserRole(supabase, user.id, user.email);
-        return { id: user.id, email: user.email, role: roleInfo.role, approved: roleInfo.approved };
-      }
+      const user = data.user;
+      const roleInfo = await supaGetUserRole(supabase, user.id, user.email);
+      return { id: user.id, email: user.email, role: roleInfo.role, approved: roleInfo.approved };
     }
 
+    // Mock mode remains available only when Supabase is NOT configured.
     const users = getLocalUsers();
     const match = users.find((u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password);
     if (!match) throw new Error("Invalid email or password.");
     setLocalSession({ userId: match.id });
     return { id: match.id, email: match.email, role: match.role, approved: match.approved };
+  },
+
+  // PUBLIC_INTERFACE
+  async requestPasswordReset(email) {
+    /**
+     * Sends a Supabase password reset email.
+     *
+     * IMPORTANT:
+     * - Requires Supabase Auth email templates configured in Supabase.
+     * - The redirect URL must be an allowed redirect URL in Supabase.
+     *
+     * Env:
+     * - REACT_APP_FRONTEND_URL should be set to the deployed frontend origin (e.g. https://admin.example.com)
+     *   so the reset link returns to this app.
+     */
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase is not configured.");
+
+    const baseUrl =
+      process.env.REACT_APP_FRONTEND_URL ||
+      window.location.origin;
+
+    const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/admin`;
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) throw new Error(error.message || "Could not start password reset.");
+    return true;
+  },
+
+  // PUBLIC_INTERFACE
+  async updatePassword(newPassword) {
+    /**
+     * Updates the current user's password (used after following a reset email link).
+     */
+    const supabase = getSupabase();
+    if (!supabase) throw new Error("Supabase is not configured.");
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw new Error(error.message || "Could not update password.");
+    return true;
   },
 
   // PUBLIC_INTERFACE
