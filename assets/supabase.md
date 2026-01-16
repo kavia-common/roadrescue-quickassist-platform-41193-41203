@@ -17,11 +17,13 @@ Admin-specific usage:
 
 ## Password reset flow
 
-The Admin Portal supports a dedicated reset route:
+The Admin Portal supports a dedicated reset route and a **mandatory callback route**:
 
 - **Forgot password?** sends a reset email via:
   `supabase.auth.resetPasswordForEmail(email, { redirectTo })`
 - The reset email link must redirect back to the SPA at:
+  **`/auth/callback`** (MANDATORY)
+- The `/auth/callback` page lets Supabase parse tokens / code and then forwards to:
   **`/reset-password`**
 - The `/reset-password` page prompts for a new password and calls:
   `supabase.auth.updateUser({ password })`
@@ -31,6 +33,7 @@ The Admin Portal supports a dedicated reset route:
 
 In Supabase Dashboard → Authentication → URL Configuration, ensure these are allowed:
 
+- `https://<your-admin-domain>/auth/callback`
 - `https://<your-admin-domain>/reset-password`
 - `https://<your-admin-domain>/admin`
 

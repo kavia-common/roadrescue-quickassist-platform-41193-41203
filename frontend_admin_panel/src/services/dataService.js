@@ -339,7 +339,11 @@ export const dataService = {
     if (!supabase) throw new Error("Supabase is not configured.");
 
     const baseUrl = process.env.REACT_APP_FRONTEND_URL || window.location.origin;
-    const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/reset-password`;
+
+    // IMPORTANT:
+    // Supabase expects the app to handle auth callbacks. We route reset emails to /auth/callback
+    // and then forward to /reset-password once Supabase has parsed tokens / code.
+    const redirectTo = `${String(baseUrl).replace(/\/$/, "")}/auth/callback`;
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
     if (error) throw new Error(error.message || "Could not start password reset.");

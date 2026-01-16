@@ -18,6 +18,7 @@ import { TwilioSmsDemoCard } from "./components/demo/TwilioSmsDemoCard";
 import { AdminAuth } from "./pages/admin/AdminAuth";
 import { AdminLayout } from "./components/layout/AdminLayout";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
+import { AuthCallbackPage } from "./pages/AuthCallbackPage";
 
 // PUBLIC_INTERFACE
 function App() {
@@ -120,6 +121,7 @@ function App() {
 
             {/* New admin route group (as requested in attachment) */}
             <Route path="/admin" element={<AdminAuth />} />
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route
               path="/admin/dashboard"
