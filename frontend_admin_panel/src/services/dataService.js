@@ -129,13 +129,13 @@ async function supaGetUserRole(supabase, userId, email) {
 
 async function supaGetProfile(supabase, userId, email) {
   try {
-    // IMPORTANT: Avoid invalid selectors like `.select('profile')` or `profiles(profile)`.
-    // Always select explicit columns.
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,email,full_name,role,approved,profile")
-      .eq("id", userId)
-      .maybeSingle();
+    // IMPORTANT:
+    // - Do NOT select non-existent columns like `profile` or nested `profiles.profile`.
+    // - Always select explicit columns that exist on `public.profiles`.
+    const profileSelect =
+      "id, full_name, email, phone, role, status, mechanic_status, specialization, service_area, approved, approved_at, created_at";
+
+    const { data, error } = await supabase.from("profiles").select(profileSelect).eq("id", userId).maybeSingle();
     if (error) throw error;
 
     if (!data) {
@@ -143,7 +143,7 @@ async function supaGetProfile(supabase, userId, email) {
       const { data: inserted, error: insertError } = await supabase
         .from("profiles")
         .insert({ id: userId, email, role: "user", approved: true })
-        .select("id,email,full_name,role,approved,profile")
+        .select(profileSelect)
         .maybeSingle();
       if (insertError) throw insertError;
       return inserted || null;
@@ -421,12 +421,12 @@ export const dataService = {
     const supabase = getSupabase();
     if (supabase) {
       // IMPORTANT: Approved select pattern:
-      // - Do NOT select `profile` alone.
+      // - Do NOT select non-existent columns like `profile`.
       // - Always select explicit columns from `profiles`.
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id,email,full_name,role,approved,profile")
-        .order("email", { ascending: true });
+      const profileSelect =
+        "id, full_name, email, phone, role, status, mechanic_status, specialization, service_area, approved, approved_at, created_at";
+
+      const { data, error } = await supabase.from("profiles").select(profileSelect).order("email", { ascending: true });
 
       if (error) throw new Error(error.message);
 
@@ -434,12 +434,19 @@ export const dataService = {
         id: u.id,
         email: u.email,
         full_name: u.full_name || null,
+        phone: u.phone || null,
         role: u.role,
-        approved: u.approved,
-        profile: u.profile,
+        status: u.status ?? null,
+        mechanic_status: u.mechanic_status ?? null,
+        specialization: u.specialization ?? null,
+        service_area: u.service_area ?? null,
+        approved: u.approved ?? false,
+        approved_at: u.approved_at ?? null,
+        created_at: u.created_at ?? null,
       }));
     }
 
+    // Mock mode: keep legacy seeded shape.
     return getLocalUsers().map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
   },
 
@@ -466,13 +473,22 @@ export const dataService = {
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from("requests").select("*").order("created_at", { ascending: false });
+      // IMPORTANT:
+      // Use an explicit join projection to profiles instead of selecting `*`.
+      // This avoids invalid selectors like `profiles.profile` and keeps payloads stable.
+      const { data, error } = await supabase
+        .from("requests")
+        .select("id, status, created_at, user_id, user_email, vehicle, issue_description, contact, assigned_mechanic_id, assigned_mechanic_email, notes, profiles (full_name, email, phone)")
+        .order("created_at", { ascending: false });
+
       if (error) throw new Error(error.message);
+
       return (data || []).map((r) => ({
         id: r.id,
         createdAt: r.created_at,
         userId: r.user_id,
-        userEmail: r.user_email,
+        // Prefer email from joined profile if present; fallback to stored user_email.
+        userEmail: r?.profiles?.email || r.user_email,
         vehicle: r.vehicle,
         issueDescription: r.issue_description,
         contact: r.contact,
