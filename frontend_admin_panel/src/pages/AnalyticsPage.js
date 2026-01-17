@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "../components/ui/Card";
 import { Table } from "../components/ui/Table";
+import { Button } from "../components/ui/Button";
 import { dataService } from "../services/dataService";
+import { useSupabaseRealtimeRefresh } from "../hooks/useSupabaseRealtimeRefresh";
 
 function bucketDay(iso) {
   const d = new Date(iso);
@@ -30,21 +32,28 @@ export function AnalyticsPage() {
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState("");
 
+  const load = useCallback(async () => {
+    setError("");
+    const r = await dataService.listRequests();
+    setRequests(r);
+  }, []);
+
+  const { refresh, lastRefreshAt, realtimeStatus, realtimeError } = useSupabaseRealtimeRefresh({
+    tables: [{ table: "requests" }],
+    onChange: load,
+    pollIntervalMs: 20000,
+    enableRealtime: true,
+  });
+
   useEffect(() => {
-    let mounted = true;
     (async () => {
-      setError("");
       try {
-        const r = await dataService.listRequests();
-        if (mounted) setRequests(r);
+        await load();
       } catch (e) {
-        if (mounted) setError(e.message || "Could not load analytics.");
+        setError(e.message || "Could not load analytics.");
       }
     })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  }, [load]);
 
   const daily = useMemo(() => {
     const map = new Map();
@@ -72,20 +81,38 @@ export function AnalyticsPage() {
 
   return (
     <div className="container">
-      <div className="hero">
-        <h1 className="h1">Analytics</h1>
-        <p className="lead">Lightweight analytics with simple visual bars.</p>
+      <div className="hero" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h1 className="h1">Analytics</h1>
+          <p className="lead">Lightweight analytics with simple visual bars.</p>
+          <div style={{ color: "var(--muted)", fontWeight: 800, fontSize: 12 }}>
+            Live updates: {realtimeStatus}
+            {lastRefreshAt ? ` • Last refresh: ${lastRefreshAt.toLocaleTimeString()}` : ""}
+          </div>
+        </div>
+        <Button variant="secondary" size="sm" onClick={refresh}>
+          Refresh
+        </Button>
       </div>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
+      {realtimeError ? <div className="alert alert-error">Realtime: {realtimeError}</div> : null}
 
       <div className="grid2">
         <Card title="Requests per day" subtitle="Counts by created date.">
-          {daily.length ? daily.map((d) => <Bar key={d.day} label={d.day} value={d.count} max={maxDaily} />) : <div style={{ color: "var(--muted)", fontWeight: 800 }}>No data</div>}
+          {daily.length ? (
+            daily.map((d) => <Bar key={d.day} label={d.day} value={d.count} max={maxDaily} />)
+          ) : (
+            <div style={{ color: "var(--muted)", fontWeight: 800 }}>No data</div>
+          )}
         </Card>
 
         <Card title="Status breakdown" subtitle="Most common statuses first.">
-          {statusCounts.length ? statusCounts.map((s) => <Bar key={s.status} label={s.status} value={s.count} max={maxStatus} />) : <div style={{ color: "var(--muted)", fontWeight: 800 }}>No data</div>}
+          {statusCounts.length ? (
+            statusCounts.map((s) => <Bar key={s.status} label={s.status} value={s.count} max={maxStatus} />)
+          ) : (
+            <div style={{ color: "var(--muted)", fontWeight: 800 }}>No data</div>
+          )}
         </Card>
       </div>
 

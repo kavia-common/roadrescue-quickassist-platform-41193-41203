@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "../components/ui/Card";
 import { Table } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { dataService } from "../services/dataService";
 import { normalizeStatus, statusLabel } from "../services/statusUtils";
+import { useSupabaseRealtimeRefresh } from "../hooks/useSupabaseRealtimeRefresh";
 
 const STATUS_OPTIONS = ["OPEN", "ASSIGNED", "EN_ROUTE", "WORKING", "COMPLETED"];
 
@@ -53,30 +54,39 @@ export function RequestManagementPage() {
     [users]
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setError("");
-    try {
-      const [r, u] = await Promise.all([dataService.listRequests(), dataService.listUsers()]);
-      setRequests(r);
-      setUsers(u);
+    const [r, u] = await Promise.all([dataService.listRequests(), dataService.listUsers()]);
+    setRequests(r);
+    setUsers(u);
 
-      // Initialize editor state
-      const s = {};
-      const a = {};
-      r.forEach((req) => {
-        s[req.id] = normalizeStatus(req.status);
-        a[req.id] = req.assignedMechanicId || "";
-      });
-      setStatusById(s);
-      setAssignById(a);
-    } catch (e) {
-      setError(e.message || "Could not load requests.");
-    }
-  };
+    // Initialize editor state
+    const s = {};
+    const a = {};
+    r.forEach((req) => {
+      s[req.id] = normalizeStatus(req.status);
+      a[req.id] = req.assignedMechanicId || "";
+    });
+    setStatusById(s);
+    setAssignById(a);
+  }, []);
+
+  const { refresh, lastRefreshAt, realtimeStatus, realtimeError } = useSupabaseRealtimeRefresh({
+    tables: [{ table: "requests" }, { table: "profiles" }],
+    onChange: load,
+    pollIntervalMs: 10000,
+    enableRealtime: true,
+  });
 
   useEffect(() => {
-    load();
-  }, []);
+    (async () => {
+      try {
+        await load();
+      } catch (e) {
+        setError(e.message || "Could not load requests.");
+      }
+    })();
+  }, [load]);
 
   const saveRow = async (req) => {
     setBusyId(req.id);
@@ -91,7 +101,7 @@ export function RequestManagementPage() {
         assignedMechanicId: newMechId,
         assignedMechanicEmail: mech ? mech.email : null,
       });
-      await load();
+      await refresh();
     } catch (e) {
       setError(e.message || "Could not update request.");
     } finally {
@@ -104,7 +114,7 @@ export function RequestManagementPage() {
     setError("");
     try {
       await dataService.updateRequest(req.id, { status: "Completed" });
-      await load();
+      await refresh();
     } catch (e) {
       setError(e.message || "Could not close request.");
     } finally {
@@ -114,13 +124,23 @@ export function RequestManagementPage() {
 
   return (
     <div className="container">
-      <div className="hero">
-        <h1 className="h1">Request Management</h1>
-        <p className="lead">Reassign requests, change status, or close cases.</p>
+      <div className="hero" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h1 className="h1">Request Management</h1>
+          <p className="lead">Reassign requests, change status, or close cases.</p>
+          <div style={{ color: "var(--muted)", fontWeight: 800, fontSize: 12 }}>
+            Live updates: {realtimeStatus}
+            {lastRefreshAt ? ` • Last refresh: ${lastRefreshAt.toLocaleTimeString()}` : ""}
+          </div>
+        </div>
+        <Button variant="secondary" size="sm" onClick={refresh}>
+          Refresh
+        </Button>
       </div>
 
       <Card title="All requests" subtitle="Edits are saved per-row.">
         {error ? <div className="alert alert-error">{error}</div> : null}
+        {realtimeError ? <div className="alert alert-error">Realtime: {realtimeError}</div> : null}
 
         <Table
           columns={[
@@ -185,7 +205,7 @@ export function RequestManagementPage() {
 
       <div style={{ marginTop: 12 }}>
         <Card title="Quick reassign helper" subtitle="Paste request ID and mechanic email to update faster (mock workflow).">
-          <QuickReassign mechanics={mechanics} onDone={load} />
+          <QuickReassign mechanics={mechanics} onDone={refresh} />
         </Card>
       </div>
     </div>
