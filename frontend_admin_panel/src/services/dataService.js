@@ -417,20 +417,39 @@ export const dataService = {
 
   // PUBLIC_INTERFACE
   async listUsers() {
+    /**
+     * Returns the Admin Users directory.
+     *
+     * Canonical source of truth: `public.profiles`.
+     *
+     * Compatibility bridge (required):
+     * - Some mechanic signups currently create `auth.users` + `public.mechanics`, but NOT `public.profiles`.
+     * - Admin Users UI reads from this method; therefore we merge mechanics into the returned list when
+     *   a corresponding `profiles` row is missing.
+     *
+     * Standardization (required):
+     * - While bridging, we opportunistically upsert missing `profiles` rows for mechanics so
+     *   `public.profiles` becomes the canonical directory going forward.
+     *
+     * NOTE:
+     * - We keep queries explicit and avoid relying on PostgREST relationship projections.
+     * - UI expectations are preserved: this function returns an array of objects with keys used by UserManagementPage.
+     */
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      // IMPORTANT: Approved select pattern:
-      // - Do NOT select non-existent columns like `profile`.
-      // - Always select explicit columns from `profiles`.
       const profileSelect =
         "id, full_name, email, phone, role, status, mechanic_status, specialization, service_area, approved, approved_at, created_at";
 
-      const { data, error } = await supabase.from("profiles").select(profileSelect).order("email", { ascending: true });
+      // 1) Canonical fetch: profiles
+      const { data: profileRows, error: profilesError } = await supabase
+        .from("profiles")
+        .select(profileSelect)
+        .order("email", { ascending: true });
 
-      if (error) throw new Error(error.message);
+      if (profilesError) throw new Error(profilesError.message);
 
-      return (data || []).map((u) => ({
+      const profiles = (profileRows || []).map((u) => ({
         id: u.id,
         email: u.email,
         full_name: u.full_name || null,
@@ -444,6 +463,109 @@ export const dataService = {
         approved_at: u.approved_at ?? null,
         created_at: u.created_at ?? null,
       }));
+
+      const byId = new Map(profiles.map((p) => [p.id, p]));
+
+      // 2) Compatibility bridge: attempt to read mechanics and merge any missing into list.
+      // This is best-effort: if RLS blocks mechanics for this admin session, we simply return profiles.
+      let mechanics = [];
+      try {
+        // Keep selection minimal and tolerant: different schemas may exist in different environments.
+        // We'll normalize fields when present.
+        const { data: mechRows, error: mechErr } = await supabase
+          .from("mechanics")
+          .select("id, user_id, email, full_name, name, phone, specialization, service_area, status, mechanic_status, created_at")
+          .order("email", { ascending: true });
+
+        if (mechErr) {
+          // Fail soft: don't break Admin UI if mechanics table isn't readable.
+          console.warn("[dataService.listUsers] Could not load mechanics for compatibility merge:", mechErr?.message || mechErr);
+        } else {
+          mechanics = mechRows || [];
+        }
+      } catch (e) {
+        console.warn("[dataService.listUsers] Mechanics compatibility merge skipped (exception):", e?.message || e);
+      }
+
+      // Merge mechanics into list when profiles row missing.
+      // Also opportunistically upsert a canonical profiles row for any missing mechanic user.
+      const missingProfileUpserts = [];
+      for (const m of mechanics) {
+        // Common patterns: mechanics.id is either the profile/user id, OR mechanics.user_id points to auth.users id.
+        const inferredId = m.user_id || m.id;
+        if (!inferredId) continue;
+
+        if (byId.has(inferredId)) continue;
+
+        const email = m.email || null;
+        const fullName = m.full_name || m.name || null;
+
+        // Create a synthetic row for immediate UI visibility (compatibility mode).
+        const synthetic = {
+          id: inferredId,
+          email,
+          full_name: fullName,
+          phone: m.phone ?? null,
+          role: "mechanic",
+          status: m.status ?? null,
+          mechanic_status: m.mechanic_status ?? null,
+          specialization: m.specialization ?? null,
+          service_area: m.service_area ?? null,
+          approved: false,
+          approved_at: null,
+          created_at: m.created_at ?? null,
+        };
+
+        byId.set(inferredId, synthetic);
+
+        // Standardize: create/upsert canonical profile row (best-effort).
+        // We avoid overwriting if later a real profile is created with more data; upsert with minimal fields only.
+        // Note: this will only succeed if the current Supabase session has permission to upsert profiles.
+        missingProfileUpserts.push({
+          id: inferredId,
+          email,
+          full_name: fullName,
+          phone: m.phone ?? null,
+          role: "mechanic",
+          approved: false,
+          // Optional fields if they exist in the schema; safe to send even if null.
+          specialization: m.specialization ?? null,
+          service_area: m.service_area ?? null,
+          status: m.status ?? null,
+          mechanic_status: m.mechanic_status ?? null,
+        });
+      }
+
+      if (missingProfileUpserts.length) {
+        // Fire-and-forget behavior is acceptable, but we still await to reduce race surprises.
+        // Fail soft: the admin UI should still show the merged synthetic users.
+        try {
+          const { error: upsertErr } = await supabase.from("profiles").upsert(missingProfileUpserts, { onConflict: "id" });
+          if (upsertErr) {
+            console.warn(
+              "[dataService.listUsers] Could not upsert missing profiles for mechanics (will still display synthetic rows):",
+              upsertErr?.message || upsertErr
+            );
+          }
+        } catch (e) {
+          console.warn(
+            "[dataService.listUsers] Exception while upserting missing profiles for mechanics (will still display synthetic rows):",
+            e?.message || e
+          );
+        }
+      }
+
+      // Stable ordering: by email asc (nulls last), then by id.
+      const merged = Array.from(byId.values()).sort((a, b) => {
+        const ae = (a.email || "").toLowerCase();
+        const be = (b.email || "").toLowerCase();
+        if (ae && be && ae !== be) return ae.localeCompare(be);
+        if (ae && !be) return -1;
+        if (!ae && be) return 1;
+        return String(a.id).localeCompare(String(b.id));
+      });
+
+      return merged;
     }
 
     // Mock mode: keep legacy seeded shape.
