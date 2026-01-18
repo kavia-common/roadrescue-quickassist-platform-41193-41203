@@ -121,14 +121,17 @@ function App() {
             />
 
             {/* Admin route group */}
+
+            {/* Canonical /admin entry point (login or redirect into dashboard) */}
             <Route
               path={ADMIN_ROUTES.root}
               element={<Navigate to={authedAdmin ? ADMIN_ROUTES.dashboard : ADMIN_ROUTES.root} replace />}
             />
-            <Route path="/admin/*" element={<AdminAuth />} />
-            <Route path="/auth/callback" element={<AuthCallbackPage />} />
-            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
+            {/* IMPORTANT:
+                Put concrete /admin/... routes BEFORE the catch-all "/admin/*".
+                Otherwise "/admin/*" matches first and routes like "/admin/users" will render AdminAuth,
+                making it look like only Dashboard (or the login screen) exists. */}
             <Route
               path={ADMIN_ROUTES.dashboard}
               element={
@@ -183,6 +186,12 @@ function App() {
                 </AdminLayout>
               }
             />
+
+            {/* /admin/* fallback: show AdminAuth for unknown admin paths (and for /admin itself via ADMIN_ROUTES.root above) */}
+            <Route path="/admin/*" element={<AdminAuth />} />
+
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -8,6 +8,9 @@ import { ADMIN_ROUTES } from "../../routes/adminRoutes";
  * IMPORTANT:
  * These core admin entries must always be visible (no feature gating),
  * per product requirements and to avoid regressions where only Dashboard shows.
+ *
+ * If feature flags/experiments are introduced elsewhere, do NOT hide these items:
+ * Dashboard, Users, Requests, Fees, Analytics.
  */
 const navItems = [
   // Core admin sections (required)
