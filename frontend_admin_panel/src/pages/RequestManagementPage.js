@@ -7,7 +7,7 @@ import { dataService } from "../services/dataService";
 import { normalizeStatus, statusLabel } from "../services/statusUtils";
 import { useSupabaseRealtimeRefresh } from "../hooks/useSupabaseRealtimeRefresh";
 
-const STATUS_OPTIONS = ["OPEN", "ASSIGNED", "EN_ROUTE", "WORKING", "COMPLETED"];
+const STATUS_OPTIONS = ["OPEN", "ASSIGNED", "IN_PROGRESS", "COMPLETED", "CANCELLED"];
 
 function statusPill(status) {
   const canonical = normalizeStatus(status);
@@ -114,7 +114,7 @@ export function RequestManagementPage() {
     setBusyId(req.id);
     setError("");
     try {
-      await dataService.updateRequest(req.id, { status: "Completed" });
+      await dataService.updateRequest(req.id, { status: "COMPLETED" });
       await refresh();
     } catch (e) {
       setError(e.message || "Could not close request.");

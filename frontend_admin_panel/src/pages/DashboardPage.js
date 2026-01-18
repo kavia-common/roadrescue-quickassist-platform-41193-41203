@@ -41,12 +41,13 @@ export function DashboardPage() {
 
   const kpis = useMemo(() => {
     const totalUsers = users.filter((u) => u.role === "user").length;
-    const totalMechanics = users.filter((u) => u.role === "mechanic" || u.role === "approved_mechanic").length;
+    const totalMechanics = users.filter((u) => u.role === "mechanic").length;
+    const pendingMechanics = users.filter((u) => u.role === "mechanic" && u.mechanic_status === "pending").length;
 
-    // requests are normalized in dataService; treat only COMPLETED as closed
-    const openRequests = requests.filter((r) => r.status !== "COMPLETED").length;
+    // Requests are normalized in dataService; OPEN/ASSIGNED/IN_PROGRESS are active.
+    const activeRequests = requests.filter((r) => ["OPEN", "ASSIGNED", "IN_PROGRESS"].includes(r.status)).length;
     const completedRequests = requests.filter((r) => r.status === "COMPLETED").length;
-    return { totalUsers, totalMechanics, openRequests, completedRequests };
+    return { totalUsers, totalMechanics, pendingMechanics, activeRequests, completedRequests };
   }, [users, requests]);
 
   return (
@@ -80,11 +81,18 @@ export function DashboardPage() {
           <div className="kpi-value">{kpis.totalMechanics}</div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">Open requests</div>
-          <div className="kpi-value">{kpis.openRequests}</div>
+          <div className="kpi-label">Pending mechanics</div>
+          <div className="kpi-value">{kpis.pendingMechanics}</div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">Completed</div>
+          <div className="kpi-label">Active requests</div>
+          <div className="kpi-value">{kpis.activeRequests}</div>
+        </div>
+      </div>
+
+      <div className="grid4" style={{ marginBottom: 12 }}>
+        <div className="kpi">
+          <div className="kpi-label">Completed requests</div>
           <div className="kpi-value">{kpis.completedRequests}</div>
         </div>
       </div>

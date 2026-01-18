@@ -118,6 +118,7 @@ function setLocalFees(fees) {
 
 async function supaGetUserRole(supabase, userId, email) {
   try {
+    // NOTE: `role` is present on public.profiles, but admin access must NOT be derived from it.
     const { data, error } = await supabase.from("profiles").select("role,approved").eq("id", userId).maybeSingle();
     if (error) return { role: "user", approved: true };
     if (!data) {
@@ -229,11 +230,18 @@ export const dataService = {
   async createRequest({ user, vehicle, issueDescription, contact }) {
     /**
      * Admin creates a new request for a customer/user.
-     * Always set status='open', never send 'id', only valid/null UUIDs for optional fields.
+     *
+     * IMPORTANT: In Supabase mode, the authoritative schema for `public.requests` is:
+     * - id, user_id, mechanic_id/assigned_mechanic_id, status, issue_description, address, lat, lon, created_at, updated_at
+     *
+     * This admin panel does not include an "admin creates request" UI in the requirements,
+     * but we keep this method for backwards compatibility and ensure it writes valid columns only.
      */
     ensureSeedData();
     const supabase = getSupabase();
     const nowIso = new Date().toISOString();
+
+    // Mock-mode shape kept for legacy UI (not used for Supabase-mode pages).
     const request = {
       id: uid("req"),
       createdAt: nowIso,
@@ -250,18 +258,21 @@ export const dataService = {
 
     if (supabase) {
       const insertPayload = {
-        created_at: nowIso,
         user_id: user.id,
-        user_email: user.email,
-        vehicle,
-        issue_description: issueDescription,
-        contact,
         status: "open",
-        assigned_mechanic_id: null,
-        assigned_mechanic_email: null,
-        notes: [],
+        issue_description: issueDescription,
+        // We don't have address/lat/lon in this legacy call; store nulls (valid).
+        address: null,
+        lat: null,
+        lon: null,
+        // Allow DB defaults/triggers for created_at/updated_at when present.
       };
-      const { data, error } = await supabase.from("requests").insert(insertPayload).select().maybeSingle();
+
+      const { data, error } = await supabase
+        .from("requests")
+        .insert(insertPayload)
+        .select("id, user_id, assigned_mechanic_id, status, issue_description, address, lat, lon, created_at, updated_at")
+        .maybeSingle();
 
       if (error) throw new Error(error.message);
       if (!data) throw new Error("Failed to insert request.");
@@ -270,18 +281,20 @@ export const dataService = {
         id: data.id,
         createdAt: data.created_at,
         userId: data.user_id,
-        userEmail: data.user_email,
-        vehicle: data.vehicle,
+        userEmail: null,
+        vehicle: null,
         issueDescription: data.issue_description,
-        contact: data.contact,
+        contact: null,
         status: data.status,
         assignedMechanicId: data.assigned_mechanic_id,
-        assignedMechanicEmail: data.assigned_mechanic_email,
-        notes: data.notes || [],
+        assignedMechanicEmail: null,
+        notes: [],
+        address: data.address,
+        lat: data.lat,
+        lon: data.lon,
       };
     }
 
-    // In mock mode, assign a custom string ID.
     const all = getLocalRequests();
     setLocalRequests([request, ...all]);
     return request;
@@ -504,57 +517,67 @@ export const dataService = {
     const supabase = getSupabase();
     if (supabase) {
       /**
-       * IMPORTANT (alternate query pattern):
-       * - Do NOT rely on PostgREST relationship projections like `profiles (...)`.
-       * - Instead: select explicit fields from `requests`, then "manual join" profiles by user_id.
+       * Authoritative schema for `public.requests`:
+       * - id, user_id, assigned_mechanic_id (or mechanic_id), status, issue_description, address, lat, lon, created_at, updated_at
        *
-       * This works even if no foreign key / relationship is established between requests.user_id and profiles.id.
+       * We "manual join" emails from public.profiles for user_id and assigned_mechanic_id.
        */
       const requestSelect =
-        "id, status, created_at, user_id, user_email, vehicle, issue_description, contact, assigned_mechanic_id, assigned_mechanic_email, notes";
+        "id, status, created_at, updated_at, user_id, assigned_mechanic_id, issue_description, address, lat, lon";
 
       const { data: rows, error } = await supabase.from("requests").select(requestSelect).order("created_at", { ascending: false });
-
       if (error) throw new Error(error.message);
 
       const requestRows = rows || [];
 
-      // Manual join: fetch profiles for the distinct request user IDs.
-      // If RLS prevents reading profiles, we fall back to stored user_email on requests.
-      const userIds = Array.from(new Set(requestRows.map((r) => r.user_id).filter(Boolean)));
+      const userIds = Array.from(
+        new Set(
+          requestRows
+            .flatMap((r) => [r.user_id, r.assigned_mechanic_id])
+            .filter(Boolean)
+        )
+      );
 
       let profilesById = new Map();
       if (userIds.length) {
-        const { data: profiles, error: profilesError } = await supabase
-          .from("profiles")
-          .select("id, email, full_name, phone")
-          .in("id", userIds);
+        const { data: profiles, error: profilesError } = await supabase.from("profiles").select("id, email, full_name").in("id", userIds);
 
         if (profilesError) {
-          // Fail soft: admin pages still render using requests.user_email when profiles can't be read.
-          console.warn("[dataService.listRequests] Could not load profiles for join; falling back to requests.user_email:", profilesError?.message || profilesError);
+          // Fail soft: UI will show placeholders if profiles can't be read due to RLS.
+          console.warn("[dataService.listRequests] Could not load profiles for join:", profilesError?.message || profilesError);
         } else {
           profilesById = new Map((profiles || []).map((p) => [p.id, p]));
         }
       }
 
-      // Return shape MUST match frontend expectations used across Dashboard/Requests/Analytics pages.
       return requestRows.map((r) => {
-        const profile = profilesById.get(r.user_id) || null;
+        const userProfile = profilesById.get(r.user_id) || null;
+        const mechProfile = r.assigned_mechanic_id ? profilesById.get(r.assigned_mechanic_id) || null : null;
 
         return {
           id: r.id,
           createdAt: r.created_at,
+          updatedAt: r.updated_at,
           userId: r.user_id,
-          // Prefer profile email if available; fallback to stored user_email.
-          userEmail: profile?.email || r.user_email,
-          vehicle: r.vehicle,
+          userEmail: userProfile?.email || null,
+
+          // Keep these keys for existing UI components
+          assignedMechanicId: r.assigned_mechanic_id || null,
+          assignedMechanicEmail: mechProfile?.email || null,
+
+          // Schema-native fields used by the rebuilt admin UI
           issueDescription: r.issue_description,
-          contact: r.contact,
+          address: r.address,
+          lat: r.lat,
+          lon: r.lon,
+
+          // Preserve existing status normalization (page expects normalized tokens)
           status: normalizeStatus(r.status),
-          assignedMechanicId: r.assigned_mechanic_id,
-          assignedMechanicEmail: r.assigned_mechanic_email,
-          notes: r.notes || [],
+
+          // Legacy keys (not in schema); keep as nulls so components don't crash
+          vehicle: null,
+          contact: null,
+          notes: [],
         };
       });
     }
@@ -571,9 +594,17 @@ export const dataService = {
     const supabase = getSupabase();
     if (supabase) {
       const update = {};
-      if (patch.status !== undefined) update.status = patch.status;
+
+      // Status enum in schema: open/assigned/in_progress/completed/cancelled
+      if (patch.status !== undefined) update.status = String(patch.status).toLowerCase();
+
+      // Accept both naming styles from UI code
       if (patch.assignedMechanicId !== undefined) update.assigned_mechanic_id = patch.assignedMechanicId;
-      if (patch.assignedMechanicEmail !== undefined) update.assigned_mechanic_email = patch.assignedMechanicEmail;
+      if (patch.mechanicId !== undefined) update.assigned_mechanic_id = patch.mechanicId;
+
+      // Always set updated_at when changing anything (helps realtime + analytics)
+      update.updated_at = new Date().toISOString();
+
       const { error } = await supabase.from("requests").update(update).eq("id", requestId);
       if (error) throw new Error(error.message);
       return true;
@@ -590,24 +621,33 @@ export const dataService = {
   // PUBLIC_INTERFACE
   async getFees() {
     ensureSeedData();
-    const defaultFees = { baseFee: 25, perMile: 2.0, afterHoursMultiplier: 1.25 };
 
-    // Always keep a local copy so the UI can persist settings even if the Supabase `fees` table isn't created yet.
+    // Local/mock format kept as-is (includes afterHoursMultiplier) for backwards compatibility with the current UI.
+    const defaultFees = { baseFee: 25, perMile: 2.0, afterHoursMultiplier: 1.25 };
     const local = getLocalFees() || defaultFees;
 
     const supabase = getSupabase();
     if (supabase) {
       try {
-        const { data, error } = await supabase.from("fees").select("*").eq("id", "default").maybeSingle();
-        if (error || !data) return local;
+        // Authoritative schema for public.fees:
+        // - base_fee, per_mile_fee, updated_at
+        // There may be 0 or 1 row. We simply take the most recently updated row (or first).
+        const { data, error } = await supabase
+          .from("fees")
+          .select("base_fee, per_mile_fee, updated_at")
+          .order("updated_at", { ascending: false })
+          .limit(1);
 
+        if (error || !data || !data.length) return local;
+
+        const row = data[0];
         const fromDb = {
-          baseFee: data.base_fee ?? local.baseFee,
-          perMile: data.per_mile ?? local.perMile,
-          afterHoursMultiplier: data.after_hours_multiplier ?? local.afterHoursMultiplier,
+          baseFee: row.base_fee ?? local.baseFee,
+          perMile: row.per_mile_fee ?? local.perMile,
+          // Not part of authoritative schema; keep local value.
+          afterHoursMultiplier: local.afterHoursMultiplier,
         };
 
-        // Keep local cache in sync with what we successfully read.
         setLocalFees(fromDb);
         return fromDb;
       } catch {
@@ -622,24 +662,23 @@ export const dataService = {
   async setFees(fees) {
     ensureSeedData();
 
-    // Always persist locally so the admin sees the configured values immediately and they survive refresh in all modes.
+    // Always persist locally (so UI survives refresh even if RLS/fees table isn't writable).
     setLocalFees(fees);
 
     const supabase = getSupabase();
     if (supabase) {
-      // Best-effort write to Supabase if the `fees` table exists; do not block the UI if it doesn't.
-      const { error } = await supabase.from("fees").upsert({
-        id: "default",
+      const payload = {
         base_fee: fees.baseFee,
-        per_mile: fees.perMile,
-        after_hours_multiplier: fees.afterHoursMultiplier,
-      });
+        per_mile_fee: fees.perMile,
+        updated_at: new Date().toISOString(),
+      };
+
+      // We don't know primary key columns; simplest is insert a new row.
+      // Admins can later enforce single-row semantics in DB if desired.
+      const { error } = await supabase.from("fees").insert(payload);
 
       if (error) {
-        // Keep the local values (already saved) and surface a clear error for admins who expect DB persistence.
-        throw new Error(
-          `Could not persist fees to Supabase (local settings were saved). ${error.message || "Supabase error."}`
-        );
+        throw new Error(`Could not persist fees to Supabase (local settings were saved). ${error.message || "Supabase error."}`);
       }
     }
 
