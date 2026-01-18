@@ -6,7 +6,10 @@ import { dataService } from "../services/dataService";
 import { useSupabaseRealtimeRefresh } from "../hooks/useSupabaseRealtimeRefresh";
 
 function bucketDay(iso) {
+  // Guard against missing/invalid timestamps.
+  if (!iso) return null;
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
   const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   return key;
 }
@@ -58,7 +61,8 @@ export function AnalyticsPage() {
   const daily = useMemo(() => {
     const map = new Map();
     requests.forEach((r) => {
-      const day = bucketDay(r.createdAt);
+      const day = bucketDay(r?.createdAt);
+      if (!day) return;
       map.set(day, (map.get(day) || 0) + 1);
     });
     return Array.from(map.entries())
@@ -69,7 +73,8 @@ export function AnalyticsPage() {
   const statusCounts = useMemo(() => {
     const counts = {};
     requests.forEach((r) => {
-      counts[r.status] = (counts[r.status] || 0) + 1;
+      const status = (r?.status || "unknown").toString();
+      counts[status] = (counts[status] || 0) + 1;
     });
     return Object.entries(counts)
       .map(([status, count]) => ({ status, count }))
@@ -120,13 +125,20 @@ export function AnalyticsPage() {
         <Card title="Recent activity" subtitle="Latest requests table.">
           <Table
             columns={[
-              { key: "id", header: "Request", render: (r) => r.id.slice(0, 8) },
-              { key: "createdAt", header: "Created", render: (r) => new Date(r.createdAt).toLocaleString() },
-              { key: "status", header: "Status" },
-              { key: "userEmail", header: "Customer" },
+              { key: "id", header: "Request", render: (r) => (r?.id ? String(r.id).slice(0, 8) : "—") },
+              {
+                key: "createdAt",
+                header: "Created",
+                render: (r) => {
+                  const d = r?.createdAt ? new Date(r.createdAt) : null;
+                  return d && !Number.isNaN(d.getTime()) ? d.toLocaleString() : "—";
+                },
+              },
+              { key: "status", header: "Status", render: (r) => (r?.status ? String(r.status) : "unknown") },
+              { key: "userEmail", header: "Customer", render: (r) => (r?.userEmail ? String(r.userEmail) : "—") },
             ]}
             rows={requests.slice(0, 20)}
-            rowKey={(r) => r.id}
+            rowKey={(r) => r?.id || `${r?.createdAt || "no-date"}_${r?.userEmail || "no-user"}_${Math.random().toString(16).slice(2)}`}
           />
         </Card>
       </div>

@@ -590,31 +590,59 @@ export const dataService = {
   // PUBLIC_INTERFACE
   async getFees() {
     ensureSeedData();
+    const defaultFees = { baseFee: 25, perMile: 2.0, afterHoursMultiplier: 1.25 };
+
+    // Always keep a local copy so the UI can persist settings even if the Supabase `fees` table isn't created yet.
+    const local = getLocalFees() || defaultFees;
+
     const supabase = getSupabase();
     if (supabase) {
-      const { data, error } = await supabase.from("fees").select("*").eq("id", "default").maybeSingle();
-      if (error) return { baseFee: 25, perMile: 2.0, afterHoursMultiplier: 1.25 };
-      if (!data) return { baseFee: 25, perMile: 2.0, afterHoursMultiplier: 1.25 };
-      return { baseFee: data.base_fee, perMile: data.per_mile, afterHoursMultiplier: data.after_hours_multiplier };
+      try {
+        const { data, error } = await supabase.from("fees").select("*").eq("id", "default").maybeSingle();
+        if (error || !data) return local;
+
+        const fromDb = {
+          baseFee: data.base_fee ?? local.baseFee,
+          perMile: data.per_mile ?? local.perMile,
+          afterHoursMultiplier: data.after_hours_multiplier ?? local.afterHoursMultiplier,
+        };
+
+        // Keep local cache in sync with what we successfully read.
+        setLocalFees(fromDb);
+        return fromDb;
+      } catch {
+        return local;
+      }
     }
-    return getLocalFees();
+
+    return local;
   },
 
   // PUBLIC_INTERFACE
   async setFees(fees) {
     ensureSeedData();
+
+    // Always persist locally so the admin sees the configured values immediately and they survive refresh in all modes.
+    setLocalFees(fees);
+
     const supabase = getSupabase();
     if (supabase) {
+      // Best-effort write to Supabase if the `fees` table exists; do not block the UI if it doesn't.
       const { error } = await supabase.from("fees").upsert({
         id: "default",
         base_fee: fees.baseFee,
         per_mile: fees.perMile,
         after_hours_multiplier: fees.afterHoursMultiplier,
       });
-      if (error) throw new Error(error.message);
-      return true;
+
+      if (error) {
+        // Keep the local values (already saved) and surface a clear error for admins who expect DB persistence.
+        throw new Error(
+          `Could not persist fees to Supabase (local settings were saved). ${error.message || "Supabase error."}`
+        );
+      }
     }
-    setLocalFees(fees);
+
     return true;
   },
 

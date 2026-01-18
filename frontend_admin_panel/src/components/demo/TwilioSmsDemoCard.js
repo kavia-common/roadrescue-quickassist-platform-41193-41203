@@ -13,10 +13,13 @@ import { Button } from "../ui/Button";
  */
 
 function getTwilioConfig() {
-  const accountSid = process.env.REACT_APP_TWILIO_ACCOUNT_SID || "";
-  const authToken = process.env.REACT_APP_TWILIO_AUTH_TOKEN || "";
-  const messagingServiceSid = process.env.REACT_APP_TWILIO_MESSAGING_SERVICE_SID || "";
-  const fromNumber = process.env.REACT_APP_TWILIO_FROM_NUMBER || "";
+  // NOTE: This repo's .env uses REACT_APP_REACT_APP_TWILIO_* (double prefix).
+  // Keep compatibility with both naming patterns to avoid breaking existing deployments.
+  const accountSid = process.env.REACT_APP_REACT_APP_TWILIO_ACCOUNT_SID || process.env.REACT_APP_TWILIO_ACCOUNT_SID || "";
+  const authToken = process.env.REACT_APP_REACT_APP_TWILIO_AUTH_TOKEN || process.env.REACT_APP_TWILIO_AUTH_TOKEN || "";
+  const messagingServiceSid =
+    process.env.REACT_APP_REACT_APP_TWILIO_MESSAGING_SERVICE_SID || process.env.REACT_APP_TWILIO_MESSAGING_SERVICE_SID || "";
+  const fromNumber = process.env.REACT_APP_REACT_APP_TWILIO_FROM_NUMBER || process.env.REACT_APP_TWILIO_FROM_NUMBER || "";
 
   return { accountSid, authToken, messagingServiceSid, fromNumber };
 }
@@ -141,9 +144,13 @@ export function TwilioSmsDemoCard({ title = "SMS Demo", defaultTo = "" }) {
 
       {!canSend ? (
         <div className="alert alert-info" style={{ marginBottom: 12 }}>
-          Twilio is not fully configured for this demo. Set:
+          Twilio is not fully configured for this demo. Set (this repo supports either naming style):
           <div style={{ marginTop: 6, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12 }}>
-            REACT_APP_TWILIO_ACCOUNT_SID, REACT_APP_TWILIO_AUTH_TOKEN, REACT_APP_TWILIO_MESSAGING_SERVICE_SID (or REACT_APP_TWILIO_FROM_NUMBER)
+            REACT_APP_REACT_APP_TWILIO_ACCOUNT_SID, REACT_APP_REACT_APP_TWILIO_AUTH_TOKEN, REACT_APP_REACT_APP_TWILIO_MESSAGING_SERVICE_SID (or
+            REACT_APP_REACT_APP_TWILIO_FROM_NUMBER)
+          </div>
+          <div style={{ marginTop: 6, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12 }}>
+            (also accepted: REACT_APP_TWILIO_ACCOUNT_SID, REACT_APP_TWILIO_AUTH_TOKEN, REACT_APP_TWILIO_MESSAGING_SERVICE_SID / REACT_APP_TWILIO_FROM_NUMBER)
           </div>
         </div>
       ) : null}
