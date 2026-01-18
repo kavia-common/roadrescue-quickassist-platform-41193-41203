@@ -2,14 +2,15 @@ import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Button } from "../ui/Button";
 import { useAuth } from "../../hooks/useAuth";
+import { ADMIN_ROUTES } from "../../routes/adminRoutes";
 
 const navItems = [
-  { label: "Dashboard", path: "/admin/dashboard" },
-  { label: "Users", path: "/admin/users" },
-  { label: "Requests", path: "/admin/requests" },
-  { label: "Fees", path: "/admin/fees" },
-  { label: "Analytics", path: "/admin/analytics" },
-  { label: "SMS Demo", path: "/admin/demo-sms" },
+  { label: "Dashboard", path: ADMIN_ROUTES.dashboard },
+  { label: "Users", path: ADMIN_ROUTES.users },
+  { label: "Requests", path: ADMIN_ROUTES.requests },
+  { label: "Fees", path: ADMIN_ROUTES.fees },
+  { label: "Analytics", path: ADMIN_ROUTES.analytics },
+  { label: "SMS Demo", path: ADMIN_ROUTES.smsDemo },
 ];
 
 // PUBLIC_INTERFACE

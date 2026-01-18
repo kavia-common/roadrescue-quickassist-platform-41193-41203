@@ -19,6 +19,7 @@ import { AdminAuth } from "./pages/admin/AdminAuth";
 import { AdminLayout } from "./components/layout/AdminLayout";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
+import { ADMIN_ROUTES, LEGACY_ROUTES } from "./routes/adminRoutes";
 
 // PUBLIC_INTERFACE
 function App() {
@@ -60,11 +61,12 @@ function App() {
         <main className="main">
           <Routes>
             {/* Legacy routes (kept for backwards compatibility) */}
-            <Route path="/" element={<Navigate to={authedAdmin ? "/dashboard" : "/login"} replace />} />
+            <Route path="/" element={<Navigate to={authedAdmin ? LEGACY_ROUTES.dashboard : "/login"} replace />} />
             <Route path="/login" element={<LoginPage onAuthed={setUser} />} />
 
+            {/* Legacy group: keep functional, but also provide canonical redirects into /admin/* */}
             <Route
-              path="/dashboard"
+              path={LEGACY_ROUTES.dashboard}
               element={
                 <RequireAuth user={authedAdmin}>
                   <DashboardPage />
@@ -72,7 +74,7 @@ function App() {
               }
             />
             <Route
-              path="/users"
+              path={LEGACY_ROUTES.users}
               element={
                 <RequireAuth user={authedAdmin}>
                   <UserManagementPage />
@@ -80,7 +82,7 @@ function App() {
               }
             />
             <Route
-              path="/requests"
+              path={LEGACY_ROUTES.requests}
               element={
                 <RequireAuth user={authedAdmin}>
                   <RequestManagementPage />
@@ -88,7 +90,7 @@ function App() {
               }
             />
             <Route
-              path="/fees"
+              path={LEGACY_ROUTES.fees}
               element={
                 <RequireAuth user={authedAdmin}>
                   <FeeSettingsPage />
@@ -96,16 +98,15 @@ function App() {
               }
             />
             <Route
-              path="/analytics"
+              path={LEGACY_ROUTES.analytics}
               element={
                 <RequireAuth user={authedAdmin}>
                   <AnalyticsPage />
                 </RequireAuth>
               }
             />
-
             <Route
-              path="/demo-sms"
+              path={LEGACY_ROUTES.smsDemo}
               element={
                 <RequireAuth user={authedAdmin}>
                   <div className="container">
@@ -119,12 +120,25 @@ function App() {
               }
             />
 
-            {/* New admin route group (as requested in attachment) */}
-            <Route path="/admin" element={<AdminAuth />} />
+            {/* Canonical redirects: keep old URLs working but move users to /admin/* */}
+            <Route path={LEGACY_ROUTES.dashboard} element={<Navigate to={ADMIN_ROUTES.dashboard} replace />} />
+            <Route path={LEGACY_ROUTES.users} element={<Navigate to={ADMIN_ROUTES.users} replace />} />
+            <Route path={LEGACY_ROUTES.requests} element={<Navigate to={ADMIN_ROUTES.requests} replace />} />
+            <Route path={LEGACY_ROUTES.fees} element={<Navigate to={ADMIN_ROUTES.fees} replace />} />
+            <Route path={LEGACY_ROUTES.analytics} element={<Navigate to={ADMIN_ROUTES.analytics} replace />} />
+            <Route path={LEGACY_ROUTES.smsDemo} element={<Navigate to={ADMIN_ROUTES.smsDemo} replace />} />
+
+            {/* Admin route group */}
+            <Route
+              path={ADMIN_ROUTES.root}
+              element={<Navigate to={authedAdmin ? ADMIN_ROUTES.dashboard : ADMIN_ROUTES.root} replace />}
+            />
+            <Route path="/admin/*" element={<AdminAuth />} />
             <Route path="/auth/callback" element={<AuthCallbackPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
+
             <Route
-              path="/admin/dashboard"
+              path={ADMIN_ROUTES.dashboard}
               element={
                 <AdminLayout>
                   <DashboardPage />
@@ -132,7 +146,7 @@ function App() {
               }
             />
             <Route
-              path="/admin/users"
+              path={ADMIN_ROUTES.users}
               element={
                 <AdminLayout>
                   <UserManagementPage />
@@ -140,7 +154,7 @@ function App() {
               }
             />
             <Route
-              path="/admin/requests"
+              path={ADMIN_ROUTES.requests}
               element={
                 <AdminLayout>
                   <RequestManagementPage />
@@ -148,7 +162,7 @@ function App() {
               }
             />
             <Route
-              path="/admin/fees"
+              path={ADMIN_ROUTES.fees}
               element={
                 <AdminLayout>
                   <FeeSettingsPage />
@@ -156,7 +170,7 @@ function App() {
               }
             />
             <Route
-              path="/admin/analytics"
+              path={ADMIN_ROUTES.analytics}
               element={
                 <AdminLayout>
                   <AnalyticsPage />
@@ -164,7 +178,7 @@ function App() {
               }
             />
             <Route
-              path="/admin/demo-sms"
+              path={ADMIN_ROUTES.smsDemo}
               element={
                 <AdminLayout>
                   <div className="container">
