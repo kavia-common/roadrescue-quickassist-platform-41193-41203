@@ -123,8 +123,11 @@ function App() {
             {/* Admin route group */}
             <Route
               path={ADMIN_ROUTES.root}
-              element={<Navigate to={authedAdmin ? ADMIN_ROUTES.dashboard : ADMIN_ROUTES.root} replace />}
+              element={<Navigate to={authedAdmin ? ADMIN_ROUTES.dashboard : "/login"} replace />}
             />
+            {/* Explicit redirect to avoid any mismatch between legacy sidebar bookmarks and canonical route */}
+            <Route path="/admin/users" element={<Navigate to={ADMIN_ROUTES.users} replace />} />
+
             <Route path="/admin/*" element={<AdminAuth />} />
             <Route path="/auth/callback" element={<AuthCallbackPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
