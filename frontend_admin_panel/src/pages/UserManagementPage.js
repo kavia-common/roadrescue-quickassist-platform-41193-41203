@@ -6,8 +6,15 @@ import { dataService } from "../services/dataService";
 import { useSupabaseRealtimeRefresh } from "../hooks/useSupabaseRealtimeRefresh";
 
 function roleLabel(role) {
-  if (role === "approved_mechanic") return "mechanic (approved)";
+  // `role` is NOT mutated by admin approval (authoritative instructions).
   return role;
+}
+
+function mechanicStatusLabel(status) {
+  if (!status) return "—";
+  if (status === "approved") return "Approved";
+  if (status === "pending") return "Pending";
+  return String(status);
 }
 
 // PUBLIC_INTERFACE
@@ -68,7 +75,7 @@ export function UserManagementPage() {
         </Button>
       </div>
 
-      <Card title="Users" subtitle="Mechanics with approved=false should be reviewed and approved.">
+      <Card title="Users" subtitle="Mechanics with status=pending should be reviewed and approved.">
         {error ? <div className="alert alert-error">{error}</div> : null}
         {realtimeError ? <div className="alert alert-error">Realtime: {realtimeError}</div> : null}
 
@@ -76,12 +83,12 @@ export function UserManagementPage() {
           columns={[
             { key: "email", header: "Email" },
             { key: "role", header: "Role", render: (r) => roleLabel(r.role) },
-            { key: "approved", header: "Approved", render: (r) => (r.approved ? "Yes" : "No") },
+            { key: "mechanic_status", header: "Mechanic Status", render: (r) => mechanicStatusLabel(r.mechanic_status) },
             {
               key: "action",
               header: "Action",
               render: (r) =>
-                r.role === "mechanic" && !r.approved ? (
+                r.role === "mechanic" && r.mechanic_status !== "approved" ? (
                   <Button size="sm" onClick={() => approve(r.id)} disabled={busyId === r.id}>
                     {busyId === r.id ? "Approving..." : "Approve"}
                   </Button>

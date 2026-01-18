@@ -446,24 +446,51 @@ export const dataService = {
       }));
     }
 
-    // Mock mode: keep legacy seeded shape.
-    return getLocalUsers().map((u) => ({ id: u.id, email: u.email, role: u.role, approved: u.approved, profile: u.profile }));
+    // Mock mode: keep legacy seeded shape, but include mechanic_status for the admin UI.
+    return getLocalUsers().map((u) => ({
+      id: u.id,
+      email: u.email,
+      role: u.role,
+      // Preferred field for approval flow:
+      mechanic_status: u.mechanic_status || (u.approved ? "approved" : "pending"),
+      // Legacy field (kept for mock/demo compatibility):
+      approved: u.approved,
+      profile: u.profile,
+    }));
   },
 
   // PUBLIC_INTERFACE
   async approveMechanic(userId) {
+    /**
+     * Admin approval (authoritative requirements):
+     * - Use `public.profiles` as the only source of truth.
+     * - Do NOT touch `role` (role is already 'mechanic').
+     * - Run ONLY a single UPDATE setting mechanic_status='approved' (+ updated_at).
+     *
+     * Equivalent SQL:
+     *   UPDATE public.profiles
+     *   SET mechanic_status = 'approved', updated_at = now()
+     *   WHERE id = <mechanic_user_id>;
+     */
     ensureSeedData();
     const supabase = getSupabase();
     if (supabase) {
-      const { error } = await supabase.from("profiles").update({ approved: true, role: "approved_mechanic" }).eq("id", userId);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ mechanic_status: "approved", updated_at: new Date().toISOString() })
+        .eq("id", userId);
+
       if (error) throw new Error(error.message);
       return true;
     }
 
+    // Mock mode: emulate the same column semantics as Supabase mode.
     const users = getLocalUsers();
     const idx = users.findIndex((u) => u.id === userId);
     if (idx < 0) throw new Error("User not found.");
-    users[idx] = { ...users[idx], approved: true, role: "approved_mechanic" };
+
+    // Keep legacy `approved` in mock data for backwards compatibility, but set mechanic_status as the primary flag.
+    users[idx] = { ...users[idx], mechanic_status: "approved", approved: true };
     setLocalUsers(users);
     return true;
   },
