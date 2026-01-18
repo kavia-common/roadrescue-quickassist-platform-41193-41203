@@ -51,6 +51,12 @@ export function UserManagementPage() {
     setBusyId(id);
     try {
       await dataService.approveMechanic(id);
+
+      // After approval, reload from `public.profiles` to ensure the row reflects `mechanic_status='approved'`.
+      // (The refresh hook may be time-based; load() is authoritative.)
+      await load();
+
+      // Still trigger a refresh tick so any other listeners/UI bits stay consistent.
       await refresh();
     } catch (e) {
       setError(e.message || "Could not approve mechanic.");
