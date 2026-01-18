@@ -6,12 +6,17 @@
  */
 
 export const ADMIN_ROUTES = {
+  // Canonical admin base
   root: "/admin",
+
+  // Required admin sections
   dashboard: "/admin/dashboard",
   users: "/admin/users",
   requests: "/admin/requests",
   fees: "/admin/fees",
   analytics: "/admin/analytics",
+
+  // Keep existing demo route (do not remove features)
   smsDemo: "/admin/demo-sms",
 };
 

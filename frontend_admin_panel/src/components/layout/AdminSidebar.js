@@ -4,12 +4,20 @@ import { Button } from "../ui/Button";
 import { useAuth } from "../../hooks/useAuth";
 import { ADMIN_ROUTES } from "../../routes/adminRoutes";
 
+/**
+ * IMPORTANT:
+ * These core admin entries must always be visible (no feature gating),
+ * per product requirements and to avoid regressions where only Dashboard shows.
+ */
 const navItems = [
+  // Core admin sections (required)
   { label: "Dashboard", path: ADMIN_ROUTES.dashboard },
   { label: "Users", path: ADMIN_ROUTES.users },
   { label: "Requests", path: ADMIN_ROUTES.requests },
   { label: "Fees", path: ADMIN_ROUTES.fees },
   { label: "Analytics", path: ADMIN_ROUTES.analytics },
+
+  // Optional/demo section (keep existing feature, but do not remove core items)
   { label: "SMS Demo", path: ADMIN_ROUTES.smsDemo },
 ];
 

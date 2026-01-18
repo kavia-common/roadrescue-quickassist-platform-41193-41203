@@ -120,14 +120,6 @@ function App() {
               }
             />
 
-            {/* Canonical redirects: keep old URLs working but move users to /admin/* */}
-            <Route path={LEGACY_ROUTES.dashboard} element={<Navigate to={ADMIN_ROUTES.dashboard} replace />} />
-            <Route path={LEGACY_ROUTES.users} element={<Navigate to={ADMIN_ROUTES.users} replace />} />
-            <Route path={LEGACY_ROUTES.requests} element={<Navigate to={ADMIN_ROUTES.requests} replace />} />
-            <Route path={LEGACY_ROUTES.fees} element={<Navigate to={ADMIN_ROUTES.fees} replace />} />
-            <Route path={LEGACY_ROUTES.analytics} element={<Navigate to={ADMIN_ROUTES.analytics} replace />} />
-            <Route path={LEGACY_ROUTES.smsDemo} element={<Navigate to={ADMIN_ROUTES.smsDemo} replace />} />
-
             {/* Admin route group */}
             <Route
               path={ADMIN_ROUTES.root}
