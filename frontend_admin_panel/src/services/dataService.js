@@ -454,16 +454,38 @@ export const dataService = {
   async approveMechanic(userId) {
     ensureSeedData();
     const supabase = getSupabase();
+
+    // Supabase mode: update the existing profile row by id.
     if (supabase) {
-      const { error } = await supabase.from("profiles").update({ approved: true, role: "approved_mechanic" }).eq("id", userId);
+      const nowIso = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          mechanic_status: "approved",
+          approved: true,
+          approved_at: nowIso,
+          updated_at: nowIso,
+        })
+        .eq("id", userId);
+
       if (error) throw new Error(error.message);
       return true;
     }
 
+    // Mock mode: keep legacy behavior but align to the new UI shape where possible.
     const users = getLocalUsers();
     const idx = users.findIndex((u) => u.id === userId);
     if (idx < 0) throw new Error("User not found.");
-    users[idx] = { ...users[idx], approved: true, role: "approved_mechanic" };
+
+    users[idx] = {
+      ...users[idx],
+      approved: true,
+      role: users[idx].role === "mechanic" ? "approved_mechanic" : users[idx].role,
+      mechanic_status: "approved",
+      approved_at: new Date().toISOString(),
+    };
+
     setLocalUsers(users);
     return true;
   },

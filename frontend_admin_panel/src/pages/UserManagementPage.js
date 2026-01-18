@@ -30,12 +30,38 @@ export function UserManagementPage() {
     load();
   }, []);
 
-  const approve = async (id) => {
-    setBusyId(id);
+  // PUBLIC_INTERFACE
+  const onApprove = async (userId) => {
+    /** Approves a mechanic by updating `public.profiles` and then refreshes the list. */
+    setError("");
+    setBusyId(userId);
+
+    // Snapshot for rollback in case the Supabase update fails.
+    const prevRows = rows;
+
     try {
-      await dataService.approveMechanic(id);
+      // Optimistic UI: immediately reflect "Approved" and hide/disable button
+      // while the network request is in-flight.
+      setRows((curr) =>
+        curr.map((r) =>
+          r.id !== userId
+            ? r
+            : {
+                ...r,
+                approved: true,
+                mechanic_status: "approved",
+                approved_at: new Date().toISOString(),
+              }
+        )
+      );
+
+      await dataService.approveMechanic(userId);
+
+      // Refresh list after success to ensure we show the latest server state.
       await load();
     } catch (e) {
+      // Roll back optimistic state on failure.
+      setRows(prevRows);
       setError(e.message || "Could not approve mechanic.");
     } finally {
       setBusyId("");
@@ -60,8 +86,8 @@ export function UserManagementPage() {
               key: "action",
               header: "Action",
               render: (r) =>
-                (r.role === "mechanic" && !r.approved) ? (
-                  <Button size="sm" onClick={() => approve(r.id)} disabled={busyId === r.id}>
+                r.role === "mechanic" && !r.approved ? (
+                  <Button size="sm" onClick={() => onApprove(r.id)} disabled={busyId === r.id}>
                     {busyId === r.id ? "Approving..." : "Approve"}
                   </Button>
                 ) : (
