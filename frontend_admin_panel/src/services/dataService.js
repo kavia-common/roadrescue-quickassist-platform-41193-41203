@@ -39,6 +39,9 @@ function ensureSeedData() {
       email: "mech@example.com",
       password: "password123",
       role: "mechanic",
+      // Source of truth for mechanic approval workflow:
+      mechanic_status: "pending",
+      // Legacy field (kept only for mock/demo compatibility):
       approved: false,
       profile: { name: "Alex Mechanic", serviceArea: "Downtown" },
     },

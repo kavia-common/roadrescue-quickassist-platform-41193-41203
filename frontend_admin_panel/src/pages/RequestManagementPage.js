@@ -49,10 +49,11 @@ export function RequestManagementPage() {
   const [statusById, setStatusById] = useState({});
   const [assignById, setAssignById] = useState({}); // mechanic id
 
-  const mechanics = useMemo(
-    () => users.filter((u) => u.role === "approved_mechanic" || (u.role === "mechanic" && u.approved)),
-    [users]
-  );
+  const mechanics = useMemo(() => {
+    // Mechanics eligible for assignment are ONLY those approved via `public.profiles.mechanic_status='approved'`.
+    // This intentionally removes all legacy checks (role='approved_mechanic' or boolean `approved` flags).
+    return users.filter((u) => u.role === "mechanic" && u.mechanic_status === "approved");
+  }, [users]);
 
   const load = useCallback(async () => {
     setError("");
