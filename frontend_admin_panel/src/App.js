@@ -123,15 +123,12 @@ function App() {
             {/* Admin route group */}
             <Route
               path={ADMIN_ROUTES.root}
-              element={<Navigate to={authedAdmin ? ADMIN_ROUTES.dashboard : "/login"} replace />}
+              element={<Navigate to={authedAdmin ? ADMIN_ROUTES.dashboard : ADMIN_ROUTES.root} replace />}
             />
-            {/* Explicit redirect to avoid any mismatch between legacy sidebar bookmarks and canonical route */}
-            <Route path="/admin/users" element={<Navigate to={ADMIN_ROUTES.users} replace />} />
+            <Route path="/admin/*" element={<AdminAuth />} />
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-            {/* IMPORTANT (React Router v6):
-                Put the wildcard /admin/* route AFTER the concrete /admin/... routes.
-                Otherwise /admin/* will match /admin/users first and render AdminAuth instead
-                of the actual Users page. */}
             <Route
               path={ADMIN_ROUTES.dashboard}
               element={
@@ -186,11 +183,6 @@ function App() {
                 </AdminLayout>
               }
             />
-
-            {/* /admin login + recovery UI (must be after concrete admin routes) */}
-            <Route path="/admin/*" element={<AdminAuth />} />
-            <Route path="/auth/callback" element={<AuthCallbackPage />} />
-            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
